@@ -39,9 +39,7 @@
 #include <sirikata/core/util/Random.hpp>
 #include <sirikata/core/options/CommonOptions.hpp>
 
-// Property tree for old API for queries
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
+#include <json_spirit/json_spirit.h>
 
 #define OH_LOG(level,msg) SILOG(oh,level,msg)
 
@@ -104,21 +102,15 @@ void ObjectHost::connect(
     // We need to encode for new, generic format, assuming basic solid angle
     // query processor
     String query;
-
-    using namespace boost::property_tree;
     bool with_query = init_sa != SolidAngle::Max;
     if (with_query) {
-        try {
-            ptree pt;
-            pt.put("angle", init_sa.asFloat());
-            pt.put("max_results", init_max_results);
-            std::stringstream data_json;
-            write_json(data_json, pt);
-            query = data_json.str();
-        }
-        catch(json_parser::json_parser_error exc) {
-            return;
-        }
+        namespace json = json_spirit;
+        json::Value json_query = json::Object();
+        json_query.put("angle", init_sa.asFloat());
+        // Windows doesn't like a normal int here for some reason, seems like a
+        // mismatch between boost's typedefs and ours.
+        json_query.put("max_results", (boost::uint32_t)init_max_results);
+        query = json::write(json_query);
     }
 
     mSessionManager.connect(
@@ -162,13 +154,13 @@ void ObjectHost::disconnect(Object* obj) {
     mSessionManager.disconnect(SpaceObjectReference(SpaceID::null(),ObjectReference(obj->uuid())));
 }
 
-bool ObjectHost::send(const Object* src, const uint16 src_port, const UUID& dest, const uint16 dest_port, const std::string& payload) {
+bool ObjectHost::send(const Object* src, const ObjectMessagePort src_port, const UUID& dest, const ObjectMessagePort dest_port, const std::string& payload) {
     Sirikata::SerializationCheck::Scoped sc(&mSerialization);
 
     return mSessionManager.send(SpaceObjectReference(SpaceID::null(),ObjectReference(src->uuid())), src_port, dest, dest_port, payload);
 }
 /*
-bool ObjectHost::send(const uint16 src_port, const UUID& src, const uint16 dest_port, const UUID& dest,const std::string& payload) {
+bool ObjectHost::send(const ObjectMessagePort src_port, const UUID& src, const ObjectMessagePort dest_port, const UUID& dest,const std::string& payload) {
     Sirikata::SerializationCheck::Scoped sc(&mSerialization);
 
     return send(src, src_port, dest, dest_port, payload);

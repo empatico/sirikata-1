@@ -49,6 +49,7 @@
 
 #include <sirikata/mesh/MeshSimplifier.hpp>
 
+#include <sirikata/core/transfer/HttpManager.hpp>
 
 namespace Sirikata {
 
@@ -69,11 +70,11 @@ private:
     UUID mUUID;
     UUID mParentUUID;
 
-    std::vector<UUID> mChildren;
+    std::vector< std::tr1::shared_ptr<struct AggregateObject>  > mChildren;
 
-      // Whether this is actually a leaf object (i.e. added implicitly as
-      // AggregateObject when added as a child of a true aggregate).
-      bool leaf;
+    // Whether this is actually a leaf object (i.e. added implicitly as
+    // AggregateObject when added as a child of a true aggregate).
+    bool leaf;
 
     Time mLastGenerateTime;
 
@@ -85,7 +86,10 @@ private:
        mUUID(uuid), mParentUUID(parentUUID),
        leaf(is_leaf),
        mLastGenerateTime(Time::null()),
-       mTreeLevel(0),  mNumObservers(0)
+       mTreeLevel(0),  mNumObservers(0),
+       mNumFailedGenerationAttempts(0),
+       cdnBaseName(),
+       refreshTTL(Time::null())
     {
       mMeshdata = Mesh::MeshdataPtr();
       generatedLastRound = false;
@@ -93,11 +97,20 @@ private:
     }
 
     uint16 mTreeLevel;
-
     uint32 mNumObservers;
+    uint32 mNumFailedGenerationAttempts;
 
     std::vector<UUID> mLeaves;
     double mDistance;  //MINIMUM distance at which this object could be part of a cut
+
+
+      // The basename returned by the CDN. This points at the entire asset
+      // rather than the particular mesh filename. Should include a version
+      // number. Used for refreshing TTLs.
+      String cdnBaseName;
+      // Time at which we should try to refresh the TTL, should be set
+      // a bit less than the actual timeout.
+      Time refreshTTL;
 
   } AggregateObject;
   typedef std::tr1::shared_ptr<AggregateObject> AggregateObjectPtr;
@@ -106,7 +119,8 @@ private:
 
 
   boost::mutex mAggregateObjectsMutex;
-  std::tr1::unordered_map<UUID, std::tr1::shared_ptr<AggregateObject>, UUID::Hasher > mAggregateObjects;
+  typedef std::tr1::unordered_map<UUID, AggregateObjectPtr, UUID::Hasher > AggregateObjectsMap;
+  AggregateObjectsMap mAggregateObjects;
 
   boost::mutex mMeshStoreMutex;
   std::tr1::unordered_map<String, Mesh::MeshdataPtr> mMeshStore;
@@ -116,10 +130,17 @@ private:
 
   Time mAggregateGenerationStartTime;
 
-  std::tr1::unordered_map<UUID, std::tr1::shared_ptr<AggregateObject>, UUID::Hasher> mDirtyAggregateObjects;
-  std::map<float, std::deque<std::tr1::shared_ptr<AggregateObject> > > mObjectsByPriority;
+  std::tr1::unordered_map<UUID, AggregateObjectPtr, UUID::Hasher> mDirtyAggregateObjects;
+  std::map<float, std::deque<AggregateObjectPtr > > mObjectsByPriority;
 
-  std::vector<UUID>& getChildren(const UUID& uuid);
+  std::vector<AggregateObjectPtr>& getChildren(const UUID& uuid) ;
+
+
+  Transfer::OAuthParamsPtr mOAuth;
+  const String mCDNUsername;
+  Duration mModelTTL;
+  Poller* mCDNKeepAlivePoller;
+
   void updateChildrenTreeLevel(const UUID& uuid, uint16 treeLevel);
   void addDirtyAggregates(UUID uuid);
 
@@ -128,13 +149,28 @@ private:
   bool generateAggregateMeshAsync(const UUID uuid, Time postTime, bool generateSiblings = true);
   void aggregationThreadMain();
 
+  // Helper that handles the upload callback and sets flags to let the request
+  // from the aggregation thread to continue
+  void handleUploadFinished(Transfer::UploadRequestPtr request, const Transfer::URI& path, AtomicValue<bool>* finished_out, Transfer::URI* generated_uri_out);
+
   // Helper for cleaning out parent state from child, or deleting it if it is an
   // abandoned leaf object (non-aggregate). Returns true if the object was
   // removed.
-  bool cleanUpChild(const UUID& child_id);
+  bool cleanUpChild(const UUID& parent_uuid, const UUID& child_id);
+
+  void removeStaleLeaves();
+
+
+  // Look for any aggregates that need a keep-alive sent to the CDN
+  // and try to send them.
+  void sendKeepAlives();
+  void handleKeepAliveResponse(const UUID& objid,
+      std::tr1::shared_ptr<Transfer::HttpManager::HttpResponse> response,
+      Transfer::HttpManager::ERR_TYPE error, const boost::system::error_code& boost_error);
+
 public:
 
-  AggregateManager( LocationService* loc) ;
+  AggregateManager(LocationService* loc, Transfer::OAuthParamsPtr oauth, const String& username);
 
   ~AggregateManager();
 
@@ -148,13 +184,18 @@ public:
 
   void aggregateObserved(const UUID& objid, uint32 nobservers);
 
+  bool findChild(std::vector<AggregateObjectPtr>& v, const UUID& uuid) ;
+
+  void removeChild(std::vector<AggregateObjectPtr>& v, const UUID& uuid) ;
+
+
   // This version requires locking to get at the AggregateObjectPtr
   // for the object. This isn't safe if you already hold that lock.
   void generateAggregateMesh(const UUID& uuid, const Duration& delayFor = Duration::milliseconds(1.0f) );
   // This version doesn't require a lock.
   void generateAggregateMesh(const UUID& uuid, AggregateObjectPtr aggObject, const Duration& delayFor = Duration::milliseconds(1.0f) );
 
-  void metadataFinished(Time t, const UUID uuid, const UUID child_uuid, std::string meshName,
+  void metadataFinished(Time t, const UUID uuid, const UUID child_uuid, std::string meshName,uint8 attemptNo,
                         std::tr1::shared_ptr<Transfer::MetadataRequest> request,
                         std::tr1::shared_ptr<Transfer::RemoteFileMetadata> response)  ;
 

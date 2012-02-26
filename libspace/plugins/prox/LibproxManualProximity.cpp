@@ -9,8 +9,7 @@
 
 #include "Protocol_Prox.pbj.hpp"
 
-#include <boost/property_tree/ptree.hpp>
-#include <boost/property_tree/json_parser.hpp>
+#include <json_spirit/json_spirit.h>
 #include <boost/foreach.hpp>
 
 #include <prox/manual/RTreeManualQueryHandler.hpp>
@@ -28,7 +27,7 @@ using std::tr1::placeholders::_2;
 LibproxManualProximity::LibproxManualProximity(SpaceContext* ctx, LocationService* locservice, CoordinateSegmentation* cseg, SpaceNetwork* net, AggregateManager* aggmgr)
  : LibproxProximityBase(ctx, locservice, cseg, net, aggmgr),
    mOHQueries(),
-   mOHHandlerPoller(mProxStrand, std::tr1::bind(&LibproxManualProximity::tickQueryHandler, this, mOHQueryHandler), Duration::milliseconds((int64)100))
+   mOHHandlerPoller(mProxStrand, std::tr1::bind(&LibproxManualProximity::tickQueryHandler, this, mOHQueryHandler), "LibproxManualProximity ObjectHost Handler Poll", Duration::milliseconds((int64)100))
 {
 
     // OH Queries
@@ -142,7 +141,8 @@ void LibproxManualProximity::handleObjectHostSubstream(int success, OHDPSST::Str
 
 void LibproxManualProximity::onObjectHostSessionEnded(const OHDP::NodeID& id) {
     mProxStrand->post(
-        std::tr1::bind(&LibproxManualProximity::handleObjectHostSessionEnded, this, id)
+        std::tr1::bind(&LibproxManualProximity::handleObjectHostSessionEnded, this, id),
+        "LibproxManualProximity::handleObjectHostSessionEnded"
     );
 }
 
@@ -199,18 +199,14 @@ void LibproxManualProximity::handleObjectHostProxMessage(const OHDP::NodeID& id,
     Protocol::Prox::QueryRequest request;
     bool parse_success = request.ParseFromString(data);
 
-    using namespace boost::property_tree;
-    ptree pt;
-    try {
-        std::stringstream phy_json(request.query_parameters());
-        read_json(phy_json, pt);
-    }
-    catch(json_parser::json_parser_error exc) {
-        PROXLOG(error, "Error parsing object host query request: " << request.query_parameters() << " (" << exc.what() << ")");
+    namespace json = json_spirit;
+    json::Value query_params;
+    if (!json::read(request.query_parameters(), query_params)) {
+        PROXLOG(error, "Error parsing object host query request: " << request.query_parameters());
         return;
     }
 
-    String action = pt.get("action", String(""));
+    String action = query_params.getString("action", String(""));
     if (action.empty()) return;
     if (action == "init") {
         PROXLOG(detailed, "Init query for " << id);
@@ -236,10 +232,16 @@ void LibproxManualProximity::handleObjectHostProxMessage(const OHDP::NodeID& id,
     else if (action == "refine") {
         PROXLOG(detailed, "Refine query for " << id);
 
+        if (!query_params.contains("nodes") || !query_params.get("nodes").isArray()) {
+            PROXLOG(detailed, "Invalid refine request " << id);
+            return;
+        }
+        json::Array json_nodes = query_params.getArray("nodes");
         std::vector<UUID> refine_nodes;
-        BOOST_FOREACH(ptree::value_type &v,
-            pt.get_child("nodes"))
-            refine_nodes.push_back(UUID(v.first, UUID::HumanReadable()));
+        BOOST_FOREACH(json::Value& v, json_nodes) {
+            if (!v.isString()) return;
+            refine_nodes.push_back(UUID(v.getString(), UUID::HumanReadable()));
+        }
 
         for(int kls = 0; kls < NUM_OBJECT_CLASSES; kls++) {
             if (mOHQueryHandler[kls] == NULL) continue;
@@ -254,10 +256,16 @@ void LibproxManualProximity::handleObjectHostProxMessage(const OHDP::NodeID& id,
     else if (action == "coarsen") {
         PROXLOG(detailed, "Coarsen query for " << id);
 
+        if (!query_params.contains("nodes") || !query_params.get("nodes").isArray()) {
+            PROXLOG(detailed, "Invalid coarsen request " << id);
+            return;
+        }
+        json::Array json_nodes = query_params.getArray("nodes");
         std::vector<UUID> coarsen_nodes;
-        BOOST_FOREACH(ptree::value_type &v,
-            pt.get_child("nodes"))
-            coarsen_nodes.push_back(UUID(v.first, UUID::HumanReadable()));
+        BOOST_FOREACH(json::Value& v, json_nodes) {
+            if (!v.isString()) return;
+            coarsen_nodes.push_back(UUID(v.getString(), UUID::HumanReadable()));
+        }
 
         for(int kls = 0; kls < NUM_OBJECT_CLASSES; kls++) {
             if (mOHQueryHandler[kls] == NULL) continue;
@@ -294,7 +302,8 @@ void LibproxManualProximity::destroyQuery(const OHDP::NodeID& id) {
 
     eraseSeqNoInfo(id);
     mContext->mainStrand->post(
-        std::tr1::bind(&LibproxManualProximity::handleRemoveAllOHLocSubscription, this, id)
+        std::tr1::bind(&LibproxManualProximity::handleRemoveAllOHLocSubscription, this, id),
+        "LibproxManualProximity::handleRemoveAllOHLocSubscription"
     );
 
 }
@@ -367,7 +376,8 @@ void LibproxManualProximity::queryHasEvents(ProxQuery* query) {
                     count++;
 
                     mContext->mainStrand->post(
-                        std::tr1::bind(&LibproxManualProximity::handleAddOHLocSubscription, this, query_id, objid)
+                        std::tr1::bind(&LibproxManualProximity::handleAddOHLocSubscription, this, query_id, objid),
+                        "LibproxManualProximity::handleAddOHLocSubscription"
                     );
 
                     Sirikata::Protocol::Prox::IObjectAddition addition = event_results.add_addition();
@@ -417,7 +427,8 @@ void LibproxManualProximity::queryHasEvents(ProxQuery* query) {
                 // subcription
 
                 mContext->mainStrand->post(
-                    std::tr1::bind(&LibproxManualProximity::handleRemoveOHLocSubscription, this, query_id, objid)
+                    std::tr1::bind(&LibproxManualProximity::handleRemoveOHLocSubscription, this, query_id, objid),
+                    "LibproxManualProximity::handleRemoveOHLocSubscription"
                 );
 
                 Sirikata::Protocol::Prox::IObjectRemoval removal = event_results.add_removal();

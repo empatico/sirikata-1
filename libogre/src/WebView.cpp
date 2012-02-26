@@ -368,7 +368,7 @@ boost::any WebView::handleOpenBrowser(WebView* wv, const JSArguments& args) {
         OverlayPosition(RP_CENTER), postingStrand, false, 70,
         TIER_MIDDLE,0);
 
-    
+
     child_wv->loadURL(url);
     child_wv->setTransparent(false);
 
@@ -426,7 +426,7 @@ void WebView::forwardBrowserNavigatedCallback(Liveness::Token alive, const Strin
 void WebView::defaultEvent(const String& name) {
 #ifndef HAVE_BERKELIUM
     mContext->mainStrand->post(
-        std::tr1::bind(&WebView::dispatchToDelegate, this, name, JSArguments())
+        std::tr1::bind(&WebView::dispatchToDelegateNoReturn, this, name, JSArguments())
     );
 #endif
 }
@@ -1289,7 +1289,8 @@ void WebView::onUnresponsive(Berkelium::Window*) {
     mUnresponsive = true;
     mContext->mainStrand->post(
         Duration::seconds(10),
-        std::tr1::bind(&WebView::handleUnresponsiveTimeout, this, livenessToken())
+        std::tr1::bind(&WebView::handleUnresponsiveTimeout, this, livenessToken()),
+        "WebView::handleUnresponsiveTimeout"
     );
 }
 

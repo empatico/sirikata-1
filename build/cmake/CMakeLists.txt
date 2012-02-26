@@ -81,72 +81,79 @@ ENDIF()
 
 
 IF(WIN32)
-ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS -MP -D_WIN32_WINNT=0x0500 -D_SCL_SECURE_NO_WARNINGS -EHsc -DBOOST_ALL_DYN_LINK)
-SET(CMAKE_CXX_FLAGS "-D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS")
-#-fno-rtti
+  ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS -MP -D_WIN32_WINNT=0x0500 -D_SCL_SECURE_NO_WARNINGS -EHsc -DBOOST_ALL_DYN_LINK)
+  SET(CMAKE_CXX_FLAGS "-D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS")
+
+  IF(sirikata_LDFLAGS)
+    SET(sirikata_LDFLAGS "${sirikata_LDFLAGS} /ignore:4099 /LARGEADDRESSAWARE")
+  ELSE()
+    SET(sirikata_LDFLAGS "/ignore:4099 /LARGEADDRESSAWARE")
+  ENDIF()
+  
+  #-fno-rtti
 ELSE()
 
-SET( CMAKE_C_FLAGS_RELEASE "-g2 -O3 -Wall -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS" CACHE STRING
+  SET( CMAKE_C_FLAGS_RELEASE "-g2 -O3 -Wall -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS" CACHE STRING
     "Built cflags with default settings."
     FORCE )
-SET( CMAKE_CXX_FLAGS_RELEASE "-g2 -O3 -Wall -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS" CACHE STRING
+  SET( CMAKE_CXX_FLAGS_RELEASE "-g2 -O3 -Wall -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS" CACHE STRING
     "Built cflags with default settings."
     FORCE )
 
-IF(NOT CMAKE_BUILD_TYPE)
-#the below lines work around a bug when cmake first is configured without <CONFIG>
-  SET(FORCE_USE_DEBUG_LOCATION "TRUE")
-  SET(CMAKE_BUILD_TYPE Debug CACHE STRING
+  IF(NOT CMAKE_BUILD_TYPE)
+    #the below lines work around a bug when cmake first is configured without <CONFIG>
+    SET(FORCE_USE_DEBUG_LOCATION "TRUE")
+    SET(CMAKE_BUILD_TYPE Debug CACHE STRING
       "Build types include: Default Debug Release None RelWithDebInfo." FORCE
       )
-ENDIF()
+  ENDIF()
 
-STRING(TOUPPER ${CMAKE_BUILD_TYPE} UPPERCASE_BUILD_TYPE)
-STRING(COMPARE EQUAL ${UPPERCASE_BUILD_TYPE} "DEBUG" ISDEBUG)
-
-SET(ADDED_DEFINITIONS -Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -fPIC -Wnon-virtual-dtor  -Wreorder -Wstrict-null-sentinel -Wsign-promo )
-
-IF(APPLE)
+  STRING(TOUPPER ${CMAKE_BUILD_TYPE} UPPERCASE_BUILD_TYPE)
+  STRING(COMPARE EQUAL ${UPPERCASE_BUILD_TYPE} "DEBUG" ISDEBUG)
+  
+  SET(ADDED_DEFINITIONS -Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -fPIC -Wnon-virtual-dtor  -Wreorder -Wstrict-null-sentinel -Wsign-promo )
+  
+  IF(APPLE)
     SET(ADDED_DEFINITIONS ${ADDED_DEFINITIONS} -isysroot ${MAC_SDK_DIR} -arch i386 ${MAC_EXTRA_FLAGS} -mmacosx-version-min=${MAC_MIN_VER} )
-
+    
     IF(sirikata_LDFLAGS)
-       SET(sirikata_LDFLAGS "${sirikata_LDFLAGS} ${MAC_EXTRA_FLAGS} -Wl,-syslibroot -Wl,${MAC_SDK_DIR} -arch i386")
+      SET(sirikata_LDFLAGS "${sirikata_LDFLAGS} ${MAC_EXTRA_FLAGS} -Wl,-syslibroot -Wl,${MAC_SDK_DIR} -arch i386")
     ELSE()
-       SET(sirikata_LDFLAGS "${MAC_EXTRA_FLAGS} -Wl,-syslibroot -Wl,${MAC_SDK_DIR} -arch i386")
+      SET(sirikata_LDFLAGS "${MAC_EXTRA_FLAGS} -Wl,-syslibroot -Wl,${MAC_SDK_DIR} -arch i386")
     ENDIF()
-ENDIF()
+  ENDIF()
 
-#-Woverloaded_virtual
-#-Wabi
-#-Wold-style-cast
-#-fno-rtti
-#-fno-rtti
-SET(CMAKE_CXX_FLAGS "-Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -pthread" CACHE STRING
+  #-Woverloaded_virtual
+  #-Wabi
+  #-Wold-style-cast
+  #-fno-rtti
+  #-fno-rtti
+  SET(CMAKE_CXX_FLAGS "-Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -pthread" CACHE STRING
     "cxxflags for all settings."
     FORCE )
-SET( CMAKE_C_FLAGS "-Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -pthread" CACHE STRING
+  SET( CMAKE_C_FLAGS "-Wall -Wno-unused-function -Wno-unused-variable -fvisibility=hidden -pthread" CACHE STRING
     "cflags for all settings."
     FORCE )
 
-SET(CMAKE_EXE_LINKER_FLAGS "-pthread" CACHE STRING
+  SET(CMAKE_EXE_LINKER_FLAGS "-pthread" CACHE STRING
     "exe ldflags for all settings."
     FORCE )
-SET( CMAKE_SHARED_LINKER_FLAGS "-pthread" CACHE STRING
+  SET( CMAKE_SHARED_LINKER_FLAGS "-pthread" CACHE STRING
     "shared ldflags for all settings."
     FORCE )
 
-SET(CMAKE_CXX_FLAGS_DEFAULT "-g" CACHE STRING
+  SET(CMAKE_CXX_FLAGS_DEFAULT "-g" CACHE STRING
     "Built cxxflags with default settings."
     FORCE )
-SET(CMAKE_CXX_FLAGS_DEFAULT "-g" CACHE STRING
+  SET(CMAKE_CXX_FLAGS_DEFAULT "-g" CACHE STRING
     "Built cxxflags with default settings."
     FORCE )
 ENDIF()
 
 SET( CMAKE_EXE_LINKER_FLAGS_DEFAULT
-    "" CACHE STRING
-    "Linking binaries with default settings."
-    FORCE )
+  "" CACHE STRING
+  "Linking binaries with default settings."
+  FORCE )
 SET( CMAKE_SHARED_LINKER_FLAGS_DEFAULT
     "" CACHE STRING
     "Building shared libraries with default settings."
@@ -156,8 +163,9 @@ MARK_AS_ADVANCED(
     CMAKE_C_FLAGS_DEFAULT
     CMAKE_EXE_LINKER_FLAGS_DEFAULT
     CMAKE_SHARED_LINKER_FLAGS_DEFAULT )
-IF(WIN32)
-ELSE()
+
+
+IF(NOT WIN32)
 SET(CMAKE_CXX_FLAGS_DEBUG "-g2 -D_DEBUG" CACHE STRING
     "Built cxxflags with default settings."
     FORCE )
@@ -239,7 +247,7 @@ INCLUDE(GitRevision)
 #  * Revisions also only have additions and are very minor.
 SET(SIRIKATA_VERSION_MAJOR "0" CACHE STRING "Sirikata's major version" FORCE)
 SET(SIRIKATA_VERSION_MINOR "0" CACHE STRING "Sirikata's minor version" FORCE)
-SET(SIRIKATA_VERSION_REVISION "19" CACHE STRING "Sirikata's revision version" FORCE)
+SET(SIRIKATA_VERSION_REVISION "20" CACHE STRING "Sirikata's revision version" FORCE)
 
 # These get translated into two settings: the VERSION and
 # SOVERSION. The SOVERSION includes just the major number so anything
@@ -341,13 +349,7 @@ MESSAGE(STATUS "Using PLATFORM_LIBS=${PLATFORM_LIBS}")
 SET(DISABLE_M32 FALSE)
 SET(FORCE_32BIT FALSE)
 SET(DISABLE_BERKELIUM FALSE)
-IF(WIN32)
-  IF(sirikata_LDFLAGS)
-    SET(sirikata_LDFLAGS ${sirikata_LDFLAGS} /ignore:4099)
-  ELSE()
-    SET(sirikata_LDFLAGS /ignore:4099)
-  ENDIF()
-ENDIF()
+
 IF(ISLINUX)
   IF(FORCE_32BIT OR EXISTS ${PLATFORM_LIBS}/arch-32bit)
     MESSAGE(STATUS "Performing 32-bit build")
@@ -370,14 +372,7 @@ ENDIF()
 
 # V8 for JS plugin
 IF(NOT V8_ROOT)
-  IF(WIN32)
-    SET(V8_ROOT ${PLATFORM_LIBS}/v8)
-    # TODO: Add path to some prebuilt version of V8 for Win32
-  ELSEIF(APPLE)
-    SET(V8_ROOT ${PLATFORM_LIBS}/installed-v8)
-  ELSE()
-    SET(V8_ROOT ${PLATFORM_LIBS}/installed-v8)
-  ENDIF()
+  SET(V8_ROOT ${PLATFORM_LIBS}/installed-v8)
 ENDIF()
 FIND_PACKAGE(V8)
 
@@ -770,6 +765,25 @@ SET(LIBOAUTHCPP_ADDED_DEFINITIONS ${ADDED_DEFINITIONS})
 ADD_SUBDIRECTORY(${TOP_LEVEL}/externals/liboauthcpp/build ${CMAKE_CURRENT_BINARY_DIR}/liboauthcpp)
 SET(LIBOAUTHCPP_INCLUDE_DIR ${TOP_LEVEL}/externals/liboauthcpp/include)
 
+# dependency: json-spirit
+SET(JSON_SPIRIT_ADDED_DEFINITIONS ${ADDED_DEFINITIONS})
+# Building under build/cmake/json-spirit causes dll-search issues, use
+# static libs on windows.
+IF(WIN32)
+  SET(JSON_SPIRIT_LIBRARY_TYPE "STATIC")
+  # We need this project to know that json_spirit is static, but properties
+  # from the subdirectory's CMakeLists.txt won't be propagated up here. This
+  # essentially duplicates the setting from there to make the linking work
+  SET(ADDED_DEFINITIONS ${ADDED_DEFINITIONS} -DJSON_SPIRIT_STATIC_LINKED)
+ELSE()
+  SET(JSON_SPIRIT_LIBRARY_TYPE "SHARED")
+ENDIF()
+SET(JSON_SPIRIT_BUILD_DEMOS FALSE)
+SET(JSON_SPIRIT_BUILD_TESTS FALSE)
+# Note that we don't use a subdirectory for this build so that the dll ends up in the right place on Windows.
+ADD_SUBDIRECTORY(${TOP_LEVEL}/externals/json-spirit/build ${CMAKE_CURRENT_BINARY_DIR}/json-spirit)
+SET(JSON_SPIRIT_INCLUDE_DIR ${TOP_LEVEL}/externals/json-spirit/include)
+
 # optional dependency: ffmpeg
 # These could probably be relaxed, but they match the ones in the
 # dependencies for Mac and Linux (Windows doesn't check versions but
@@ -913,6 +927,13 @@ SET(TEST_CASSANDRA FALSE
 )
 
 # -- Compile-time debugging settings --
+#
+SET(SIRIKATA_TRACK_EVENT_QUEUES FALSE
+  CACHE BOOL "If true, track how many outstanding events are enqueued on IOServices and IOStrands."
+)
+IF(SIRIKATA_TRACK_EVENT_QUEUES)
+  ADD_DEFINITIONS(-DSIRIKATA_TRACK_EVENT_QUEUES)
+ENDIF()
 # Space session message delay
 # NOTE: When you set this, keep in mind that it takes a connect request +
 # connect success ack before messages are forwarded (which in turn allows the
@@ -933,6 +954,16 @@ STRING(LENGTH "${SPACE_DELAY_APPLY_LOC_UPDATE}" SPACE_DELAY_APPLY_LOC_UPDATE_LEN
 IF(SPACE_DELAY_APPLY_LOC_UPDATE_LENGTH GREATER 0)
   ADD_DEFINITIONS(-DSIRIKATA_SPACE_DELAY_APPLY_LOC_UPDATE=${SPACE_DELAY_APPLY_LOC_UPDATE})
 ENDIF()
+# Berkelium remote debugging support. Enables passing the special parameter enabling port 9222 as a debugger server
+SET(BERKELIUM_REMOTE_DEBUG FALSE
+  CACHE BOOL "If true, enables the remote debugging port for Berkelium windows."
+)
+IF(BERKELIUM_REMOTE_DEBUG)
+  ADD_DEFINITIONS(-DBERKELIUM_REMOTE_DEBUGGING=1)
+ELSE()
+  ADD_DEFINITIONS(-DBERKELIUM_REMOTE_DEBUGGING=0)
+ENDIF()
+
 
 
 #variable which contains list of plugin targets we want to install
@@ -1034,6 +1065,7 @@ SET(INCLUDE_DIRECTORIES
   ${GSL_INCLUDE_DIR}
   ${HTTP_PARSER_INCLUDE_DIR}
   ${LIBOAUTHCPP_INCLUDE_DIR}
+  ${JSON_SPIRIT_INCLUDE_DIR}
   )
 
 IF(BUILD_LIBSQLITE)
@@ -1302,7 +1334,7 @@ SET(SIRIKATA_CORE_SOURCES
 	${LIBCORE_SOURCE_DIR}/transfer/FileTransferHandler.cpp
 	${LIBCORE_SOURCE_DIR}/transfer/HttpTransferHandler.cpp
 	${LIBCORE_SOURCE_DIR}/transfer/DataTransferHandler.cpp
-	${LIBCORE_SOURCE_DIR}/transfer/TransferPool.cpp
+	${LIBCORE_SOURCE_DIR}/transfer/TransferRequest.cpp
 	${LIBCORE_SOURCE_DIR}/transfer/HttpManager.cpp
         ${LIBCORE_SOURCE_DIR}/transfer/ResourceDownloadTask.cpp
 	${LIBCORE_SOURCE_DIR}/transfer/OAuthHttpManager.cpp
@@ -1320,7 +1352,6 @@ SET(SIRIKATA_CORE_SOURCES
    	${LIBCORE_SOURCE_DIR}/options/CommonOptions.cpp
         ${LIBCORE_SOURCE_DIR}/network/Address4.cpp
 	${LIBCORE_SOURCE_DIR}/network/IOService.cpp
-	${LIBCORE_SOURCE_DIR}/network/IOServiceFactory.cpp
 	${LIBCORE_SOURCE_DIR}/network/IOServicePool.cpp
 	${LIBCORE_SOURCE_DIR}/network/IOWork.cpp
 	${LIBCORE_SOURCE_DIR}/network/IOStrand.cpp
@@ -1354,7 +1385,6 @@ SET(SIRIKATA_CORE_SOURCES
 	${LIBCORE_SOURCE_DIR}/queue/ThreadSafeQueue.cpp
         ${LIBCORE_SOURCE_DIR}/util/Platform.cpp
 	${LIBCORE_SOURCE_DIR}/util/UUID.cpp
-        ${LIBCORE_SOURCE_DIR}/util/ThreadId.cpp
 	${LIBCORE_SOURCE_DIR}/util/BoundingInfo.cpp
         ${LIBCORE_SOURCE_DIR}/util/Hash.cpp
         ${LIBCORE_SOURCE_DIR}/util/Timer.cpp
@@ -1416,7 +1446,6 @@ ELSE()
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/Transform.hpp
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/BoundingInfo.hpp
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/UUID.hpp
- ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/ThreadId.hpp
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/Vector3.hpp
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/Vector4.hpp
  ${LIBCORE_INCLUDE_DIR}/sirikata/core/util/SolidAngle.hpp
@@ -1824,9 +1853,11 @@ SET(BENCH_SOURCES
 #test source files
 SET(CXXTESTSources
 ${TEST_LIBCORE_SOURCE_DIR}/TransferTest.hpp
+#${TEST_LIBCORE_SOURCE_DIR}/TransferUploadTest.hpp
 ${TEST_LIBCORE_SOURCE_DIR}/AnyTest.hpp
 ${TEST_LIBCORE_SOURCE_DIR}/AtomicTest.hpp
 #${TEST_LIBCORE_SOURCE_DIR}/CacheLayerTest.hpp
+${TEST_LIBCORE_SOURCE_DIR}/CircularBufferTest.hpp
 ${TEST_LIBCORE_SOURCE_DIR}/ExtrapolationTest.hpp
 ${TEST_LIBCORE_SOURCE_DIR}/FactoryTest.hpp
 ${TEST_LIBCORE_SOURCE_DIR}/FairQueueTest.hpp
@@ -1850,14 +1881,15 @@ ENDIF()
 IF(BUILD_SQLITE_OH)
   SET(CXXTESTSources
     ${CXXTESTSources}
-    ${TEST_LIBOH_SOURCE_DIR}/SQLiteStorageTest.hpp)
+    ${TEST_LIBOH_SOURCE_DIR}/SQLiteStorageTest.hpp
+    ${TEST_LIBOH_SOURCE_DIR}/SQLiteStressTest.hpp)
 ENDIF()
 
 IF(LIBCASSANDRA_FOUND AND TEST_CASSANDRA)
   SET(CXXTESTSources
     ${CXXTESTSources}
     ${TEST_LIBOH_SOURCE_DIR}/CassandraStorageTest.hpp
-    ${TEST_LIBCASSANDRA_SOURCE_DIR}/CassandraStressTest.hpp)
+    ${TEST_LIBOH_SOURCE_DIR}/CassandraStressTest.hpp)
 ENDIF()
 
 ADD_CXXTEST_CPP_TARGET(CXXTEST ${CXXTESTSources}
@@ -1886,6 +1918,7 @@ SET(SIRIKATA_CORE_LIBRARIES
     http-parser
     ${GOOGLE_PERFTOOLS_SETTING_LIBRARIES}
     oauthcpp
+    json_spirit
     )
 
 IF(BERKELIUM_FOUND)
@@ -2318,20 +2351,6 @@ ADD_PLUGIN_TARGET(csvfactory
 		    )
 SET(PLUGIN_INSTALL_LIST ${PLUGIN_INSTALL_LIST} csvfactory)
 
-
-SET(LIBOH_PLUGIN_FILE_DIR ${LIBOH_PLUGIN_DIR}/file)
-SET(LIBOH_PLUGIN_FILE_SOURCES
- ${LIBOH_PLUGIN_FILE_DIR}/FileStorage.cpp
- ${LIBOH_PLUGIN_FILE_DIR}/PluginInterface.cpp
-    )
-ADD_PLUGIN_TARGET(oh-file
-                    SOURCES ${LIBOH_PLUGIN_FILE_SOURCES}
-                    TARGET_LDFLAGS ${sirikata_LDFLAGS}
-                    TARGET_LIBRARIES ${SIRIKATA_OH_LIB} ${SIRIKATA_CORE_LIB}
-                    LIBRARIES ${SIRIKATA_OH_LIB} ${SIRIKATA_CORE_LIB}
-		    VERSION_INFO ${SIRIKATA_VERSION_SETTINGS}
-		    )
-SET(PLUGIN_INSTALL_LIST ${PLUGIN_INSTALL_LIST} oh-file)
 
 IF(BUILD_SQLITE_OH)
   SET(LIBOH_PLUGIN_SQLITE_DIR ${LIBOH_PLUGIN_DIR}/sqlite)

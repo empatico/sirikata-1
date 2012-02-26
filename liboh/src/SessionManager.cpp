@@ -336,11 +336,11 @@ SessionManager::SessionManager(
     ObjectConnectedCallback conn_cb, ObjectMigratedCallback mig_cb,
     ObjectMessageHandlerCallback msg_cb, ObjectDisconnectedCallback disconn_cb
 )
- : PollingService(ctx->mainStrand, Duration::seconds(1.f), ctx, "Space Server"),
+ : PollingService(ctx->mainStrand, "SessionManager Poll", Duration::seconds(1.f), ctx, "Session Manager"),
    OHDP::DelegateService( std::tr1::bind(&SessionManager::createDelegateOHDPPort, this, std::tr1::placeholders::_1, std::tr1::placeholders::_2) ),
    mContext( ctx ),
    mSpace(space),
-   mIOStrand( ctx->ioService->createStrand() ),
+   mIOStrand( ctx->ioService->createStrand("SessionManager") ),
    mServerIDMap(sidmap),
    mObjectConnectedCallback(conn_cb),
    mObjectMigratedCallback(mig_cb),
@@ -581,14 +581,19 @@ void SessionManager::openConnectionStartSession(const SpaceObjectReference& spor
               serializePBJMessage(session_msg),
             conn->server()
             )) {
-        mContext->mainStrand->post(Duration::seconds(0.05),std::tr1::bind(&SessionManager::retryOpenConnection,this,sporef_uuid,conn->server()));
+        mContext->mainStrand->post(
+            Duration::seconds(0.05),
+            std::tr1::bind(&SessionManager::retryOpenConnection,this,sporef_uuid,conn->server()),
+            "&SessionManager::retryOpenConnection"
+        );
     }
     else {
         // Setup a retry in case something gets dropped -- must check status and
         // retries entire connection process
         mContext->mainStrand->post(
             Duration::seconds(3),
-            std::tr1::bind(&SessionManager::checkConnectedAndRetry, this, sporef_uuid, conn->server())
+            std::tr1::bind(&SessionManager::checkConnectedAndRetry, this, sporef_uuid, conn->server()),
+            "SessionManager::checkConnectedAndRetry"
         );
     }
 }
@@ -666,7 +671,9 @@ void SessionManager::openConnectionStartMigration(const SpaceObjectReference& sp
                    std::tr1::bind(&SessionManager::getSpaceConnection,
                                   this,
                                   sid,
-                                  retry));
+                       retry),
+                "SessionManager::getSpaceConnection"
+            );
 
         SESSION_LOG(warn,"Could not send start migration message in"\
             "openConnectionStartMigration.  Re-trying");
@@ -697,8 +704,8 @@ bool SessionManager::delegateOHDPPortSend(const OHDP::Endpoint& source_ep, const
     // ObjectMessage) and the source NodeID is just null (always null for
     // local).
     return send(
-        SpaceObjectReference(source_ep.space(), ObjectReference(UUID::null())), (uint16)source_ep.port(),
-        UUID::null(), (uint16)dest_ep.port(),
+        SpaceObjectReference(source_ep.space(), ObjectReference(UUID::null())), source_ep.port(),
+        UUID::null(), dest_ep.port(),
         String((char*)payload.data(), payload.size()),
         (ServerID)dest_ep.node()
     );
@@ -709,7 +716,7 @@ void SessionManager::timeSyncUpdated() {
     mObjectConnections.invokeDeferredCallbacks();
 }
 
-bool SessionManager::send(const SpaceObjectReference& sporef_src, const uint16 src_port, const UUID& dest, const uint16 dest_port, const std::string& payload, ServerID dest_server) {
+bool SessionManager::send(const SpaceObjectReference& sporef_src, const ObjectMessagePort src_port, const UUID& dest, const ObjectMessagePort dest_port, const std::string& payload, ServerID dest_server) {
     Sirikata::SerializationCheck::Scoped sc(&mSerialization);
 
     if (mShuttingDown)
@@ -745,7 +752,7 @@ bool SessionManager::send(const SpaceObjectReference& sporef_src, const uint16 s
     return pushed;
 }
 
-void SessionManager::sendRetryingMessage(const SpaceObjectReference& sporef_src, const uint16 src_port, const UUID& dest, const uint16 dest_port, const std::string& payload, ServerID dest_server, Network::IOStrand* strand, const Duration& rate) {
+void SessionManager::sendRetryingMessage(const SpaceObjectReference& sporef_src, const ObjectMessagePort src_port, const UUID& dest, const ObjectMessagePort dest_port, const std::string& payload, ServerID dest_server, Network::IOStrand* strand, const Duration& rate) {
     bool sent = send(
         sporef_src, src_port,
         dest, dest_port,
@@ -760,7 +767,8 @@ void SessionManager::sendRetryingMessage(const SpaceObjectReference& sporef_src,
                 dest, dest_port,
                 payload,
                 dest_server,
-                strand, rate)
+                strand, rate),
+            "SessionManager::sendRetryingMessage"
         );
     }
 }
@@ -921,7 +929,9 @@ void SessionManager::handleSpaceConnection(const Sirikata::Network::Stream::Conn
         SESSION_LOG(error,"Disconnected from server " << sid << ": " << reason);
         delete conn;
         mConnections.erase(sid);
-        mTimeSyncClient->removeNode(OHDP::NodeID(sid));
+        if (mTimeSyncClient != NULL)
+            mTimeSyncClient->removeNode(OHDP::NodeID(sid));
+        
         // Notify connected objects
         mObjectConnections.handleUnderlyingDisconnect(sid, reason);
         // If we have no connections left, we have to give up on TimeSync
@@ -942,7 +952,8 @@ void SessionManager::handleSpaceSession(ServerID sid, SpaceNodeConnection* conn)
 
 void SessionManager::scheduleHandleServerMessages(SpaceNodeConnection* conn) {
     mContext->mainStrand->post(
-        std::tr1::bind(&SessionManager::handleServerMessages, this, conn)
+        std::tr1::bind(&SessionManager::handleServerMessages, this, conn),
+        "SessionManager::handleServerMessages"
     );
 }
 

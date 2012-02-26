@@ -2,6 +2,7 @@
 
 #include <sirikata/core/transfer/TransferMediator.hpp>
 #include <sirikata/core/transfer/MaxPriorityAggregation.hpp>
+#include <sirikata/core/util/Timer.hpp>
 #include <stdio.h>
 
 using namespace std;
@@ -40,7 +41,16 @@ TransferMediator::~TransferMediator() {
 void TransferMediator::mediatorThread() {
     while(!mCleanup) {
         checkQueue();
-        boost::this_thread::sleep(boost::posix_time::milliseconds(20));
+
+        /**
+           Ewen and I weren't able to identify why the below call caused a
+           deadlock on the shared space hosted on sns30 (could not reproduce on
+           other machines).  With the below line, in gdb, with bulletphysics on,
+           and servermap-options set to port 6880, we'd get 4 calls to
+           checkQueue, followed by no follow up calls.  Not sure what to say.
+         */
+        //boost::this_thread::sleep(boost::posix_time::milliseconds(5));
+        Timer::sleep(Duration::milliseconds(5));
     }
     for(PoolType::iterator pool = mPools.begin(); pool != mPools.end(); pool++) {
         pool->second->cleanup();
@@ -134,7 +144,7 @@ void TransferMediator::checkQueue() {
  */
 
 void TransferMediator::AggregateRequest::updateAggregatePriority() {
-    TransferRequest::PriorityType newPriority = TransferMediator::getSingleton().mAggregationAlgorithm->aggregate(mTransferReqs);
+    Priority newPriority = TransferMediator::getSingleton().mAggregationAlgorithm->aggregate(mTransferReqs);
     mPriority = newPriority;
 }
 
@@ -172,7 +182,7 @@ const std::string& TransferMediator::AggregateRequest::getIdentifier() const {
     return mIdentifier;
 }
 
-TransferRequest::PriorityType TransferMediator::AggregateRequest::getPriority() const {
+Priority TransferMediator::AggregateRequest::getPriority() const {
     return mPriority;
 }
 
@@ -243,13 +253,13 @@ void TransferMediator::PoolWorker::run() {
                 }
             } else {
                 //store original aggregated priority for later
-                TransferRequest::PriorityType oldAggPriority = (*findID)->getPriority();
+                Priority oldAggPriority = (*findID)->getPriority();
 
                 //Update the priority of this client
                 (*findID)->setClientPriority(req);
 
                 //And check if it's changed, we need to update the index
-                TransferRequest::PriorityType newAggPriority = (*findID)->getPriority();
+                Priority newAggPriority = (*findID)->getPriority();
                 if(oldAggPriority != newAggPriority) {
                     //Convert the iterator to the priority one and update
                     AggregateListByPriority::iterator byPriority =

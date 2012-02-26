@@ -70,6 +70,7 @@ void JSContextStruct::httpFail(v8::Persistent<v8::Function> cb,const String& fai
         return;
     }
 
+    v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(mCtx->mIsolate);
     v8::HandleScope handle_scope;
     v8::Context::Scope context_scope(mContext);
@@ -86,6 +87,7 @@ void JSContextStruct::httpSuccess(v8::Persistent<v8::Function> cb,EmersonHttpMan
         return;
     }
 
+    v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(mCtx->mIsolate);
     v8::HandleScope handle_scope;
     v8::Context::Scope context_scope(mContext);
@@ -170,6 +172,19 @@ void JSContextStruct::proximateEvent(const SpaceObjectReference& goneFrom,
     if (getIsSuspended() || getIsCleared())
         return;
 
+    if (cbOnConnected.IsEmpty() && !isGone)
+    {
+        JSLOG(warn,"Ignoring proximity addition because have no callback");
+        return;
+    }
+
+    if (cbOnDisconnected.IsEmpty() && isGone)
+    {
+        JSLOG(warn,"Ignoring proximity removal because have no callback");
+        return;
+    }
+
+    
     CHECK_EMERSON_SCRIPT_RETURN(emerScript,notifyProximateGone,jsObjScript);
 
     if (((associatedPresence != NULL) &&
@@ -187,6 +202,15 @@ v8::Handle<v8::Value> JSContextStruct::struct_evalInGlobal(const String& native_
 }
 
 
+v8::Handle<v8::Value> JSContextStruct::pushEvalContextScopeDirectory(const String& newDir)
+{
+    return jsObjScript->pushEvalContextScopeDirectory(newDir);
+}
+
+v8::Handle<v8::Value> JSContextStruct::popEvalContextScopeDirectory()
+{
+    return jsObjScript->popEvalContextScopeDirectory();
+}
 
 
 v8::Handle<v8::Value> JSContextStruct::emersonCompileString(const String& toCompile)
@@ -238,12 +262,12 @@ v8::Handle<v8::Value> JSContextStruct::setRestoreScript(const String& key, v8::H
 }
 
 
-v8::Handle<v8::Value>JSContextStruct::debug_fileWrite(const String& strToWrite,const String& filename)
+v8::Handle<v8::Value>JSContextStruct::debug_fileWrite(String& strToWrite,String& filename)
 {
     return jsObjScript->debug_fileWrite(strToWrite,filename);
 }
 
-v8::Handle<v8::Value> JSContextStruct::debug_fileRead(const String& filename)
+v8::Handle<v8::Value> JSContextStruct::debug_fileRead(String& filename)
 {
     return jsObjScript->debug_fileRead(filename);
 }
@@ -312,7 +336,7 @@ void JSContextStruct::flushQueuedSuspendablesToChange()
 
 //performs the initialization and population of util object, system object,
 //and system object's presences array.
-void JSContextStruct::createContextObjects()
+void JSContextStruct::createContextObjects(String* scriptToEval)
 {
     v8::HandleScope handle_scope;
     v8::Context::Scope context_scope(mContext);
@@ -349,7 +373,10 @@ void JSContextStruct::createContextObjects()
 
     //Always load the shim layer.
     //import shim
-    jsObjScript->shimImportAndEvalScript(this,"");
+    if (scriptToEval == NULL)
+        jsObjScript->shimImportAndEvalScript(this,"");
+    else
+        jsObjScript->shimImportAndEvalScript(this,*scriptToEval);
 }
 
 v8::Handle<v8::Value>  JSContextStruct::checkHeadless()
@@ -589,11 +616,7 @@ v8::Handle<v8::Value> JSContextStruct::struct_rootReset()
     //recreate system and mcontext objects
     v8::HandleScope handle_scope;
     mContext = v8::Context::New(NULL, mContGlobTempl);
-    createContextObjects();
-
-    //import shim and eval mScript
-    jsObjScript->shimImportAndEvalScript(this,mScript);
-
+    createContextObjects(&mScript);
 
     //re-load presences
     CHECK_EMERSON_SCRIPT_ERROR(emerScript,reset,jsObjScript);
@@ -784,6 +807,12 @@ void JSContextStruct::struct_asyncDeregisterSuspendable (
             return;
 
         Liveness::Lock lockedCont(contAlive);
+
+        v8::Locker locker (mCtx->mIsolate);
+        v8::Isolate::Scope iscope(mCtx->mIsolate);
+        v8::HandleScope handle_scope;
+        v8::Context::Scope context_scope(mContext);
+
         //context and suspendable are still alive.  go
         //ahead and delete normally.
         struct_deregisterSuspendable(toDeregister);
