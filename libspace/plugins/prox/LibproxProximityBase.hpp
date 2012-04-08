@@ -7,6 +7,7 @@
 
 #include <sirikata/space/Proximity.hpp>
 #include "CBRLocationServiceCache.hpp"
+#include <prox/base/QueryEvent.hpp>
 
 namespace Sirikata {
 
@@ -19,6 +20,9 @@ public:
     ~LibproxProximityBase();
 
 protected:
+    typedef Prox::QueryEvent<ObjectProxSimulationTraits> QueryEvent;
+    typedef std::deque<QueryEvent> QueryEventList;
+
     // Helper types & methods
     enum ObjectClass {
         OBJECT_CLASS_STATIC = 0,
@@ -29,6 +33,16 @@ protected:
     static BoundingBox3f aggregateBBoxes(const BoundingBoxList& bboxes);
     static bool velocityIsStatic(const Vector3f& vel);
 
+    // Coalesces events, turning them effectively into one giant event (although
+    // split across enough events that no event is too large). This gets rid of
+    // any intermediate additions/removals that occurred as the cut was
+    // refined/unrefined. The old results are destroyed and the new ones are
+    // placed back in the query event queue.
+    //
+    // per_event indicates how many additions/removals to put in each
+    // event. Since they are no longer forced to be together to be atomic, we
+    // can pack them however we like.
+    void coalesceEvents(QueryEventList& evts, uint32 per_event);
 
     // BOTH Threads: These are read-only.
 
@@ -179,6 +193,12 @@ protected:
     virtual void aggregateObserved(const UUID& objid, uint32 nobservers);
     // Helper for updating aggregates
     void updateAggregateLoc(const UUID& objid, const BoundingSphere3f& bnds);
+
+    // Command handlers
+    virtual void commandProperties(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) = 0;
+    virtual void commandListHandlers(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) = 0;
+    virtual void commandForceRebuild(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) = 0;
+    virtual void commandListNodes(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) = 0;
 
 }; // class LibproxProximityBase
 

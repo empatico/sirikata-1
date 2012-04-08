@@ -48,6 +48,8 @@
 #include <sirikata/core/service/Context.hpp>
 #include <sirikata/oh/ObjectQueryProcessor.hpp>
 
+#include <sirikata/core/network/IOStrandImpl.hpp>
+
 #define OH_LOG(lvl,msg) SILOG(oh,lvl,msg)
 
 namespace Sirikata {
@@ -89,6 +91,29 @@ ObjectHost::ObjectHost(ObjectHostContext* ctx, Network::IOService *ioServ, const
                 mScriptManagers[i->first] = newmgr;
         }
     }
+
+    if (mContext->commander() != NULL) {
+        mContext->commander()->registerCommand(
+            "oh.objects.list",
+            mContext->mainStrand->wrap(std::tr1::bind(&ObjectHost::commandListObjects, this, _1, _2, _3))
+        );
+        mContext->commander()->registerCommand(
+            "oh.objects.create",
+            mContext->mainStrand->wrap(std::tr1::bind(&ObjectHost::commandCreateObject, this, _1, _2, _3))
+        );
+        mContext->commander()->registerCommand(
+            "oh.objects.destroy",
+            mContext->mainStrand->wrap(std::tr1::bind(&ObjectHost::commandDestroyObject, this, _1, _2, _3))
+        );
+
+        // To register only one copy of the command, we register HO commands
+        // here and dispatch them to the appropriate HO.
+        mContext->commander()->registerCommand(
+            "oh.objects.presences",
+            mContext->mainStrand->wrap(std::tr1::bind(&ObjectHost::commandObjectPresences, this, _1, _2, _3))
+        );
+
+    }
 }
 
 ObjectHost::~ObjectHost()
@@ -113,6 +138,12 @@ HostedObjectPtr ObjectHost::createObject(const String& script_type, const String
 HostedObjectPtr ObjectHost::createObject(const UUID &uuid, const String& script_type, const String& script_opts, const String& script_contents) {
     mActiveHostedObjects++;
     HostedObjectPtr ho = HostedObject::construct<HostedObject>(mContext, this, uuid);
+
+    // Safe weak reference by internal id. This lets us use the internal ID to
+    // uniquely reference the object and look it up, e.g. for external commands
+    assert(mHostedObjectsByID.find(uuid) == mHostedObjectsByID.end());
+    mHostedObjectsByID[uuid] = ho;
+
     ho->start();
     // NOTE: This condition has been carefully thought through. Since you can
     // get a script into a dead state anyway, we only trigger defaults when the
@@ -195,6 +226,7 @@ bool ObjectHost::connect(
     const String& mesh,
     const String& phy,
     const String& query,
+    const String& zernike,
     ConnectedCallback connected_cb,
     MigratedCallback migrated_cb,
     StreamCreatedCallback stream_created_cb,
@@ -208,7 +240,7 @@ bool ObjectHost::connect(
 
     String filtered_query = mQueryProcessor->connectRequest(ho, sporef, query);
     return sm->connect(
-        sporef, loc, orient, bnds, mesh, phy, filtered_query,
+        sporef, loc, orient, bnds, mesh, phy, filtered_query, zernike,
         std::tr1::bind(&ObjectHost::wrappedConnectedCallback, this, HostedObjectWPtr(ho), _1, _2, _3, connected_cb),
         migrated_cb,
         std::tr1::bind(&ObjectHost::wrappedStreamCreatedCallback, this, HostedObjectWPtr(ho), _1, _2, stream_created_cb),
@@ -328,6 +360,10 @@ void ObjectHost::unregisterHostedObject(const SpaceObjectReference& sporef_uuid,
 }
 
 void ObjectHost::hostedObjectDestroyed(const UUID& objid) {
+    // Remove our weak reference to the object
+    assert(mHostedObjectsByID.find(objid) != mHostedObjectsByID.end());
+    mHostedObjectsByID.erase(objid);
+
     // This may not always be the best policy, but for now, if we run out of
     // all objects then its safe to try to shutdown. Without a remote admin
     // interface or something, its going to be impossible for any *new* work
@@ -336,7 +372,7 @@ void ObjectHost::hostedObjectDestroyed(const UUID& objid) {
     // always be zero if the latter is.
     mActiveHostedObjects--;
     if (mHostedObjects.empty() && mActiveHostedObjects == 0 && !mContext->stopped())
-        mContext->shutdown();
+        mContext->mainStrand->post(std::tr1::bind(&Context::shutdown, mContext), "Shutdown after last object destroyed");
 }
 
 
@@ -347,6 +383,14 @@ HostedObjectPtr ObjectHost::getHostedObject(const SpaceObjectReference& sporef) 
     }
     return HostedObjectPtr();
 }
+
+HostedObjectPtr ObjectHost::getHostedObject(const UUID& internal_id) const {
+    InternalIDHostedObjectMap::const_iterator iter = mHostedObjectsByID.find(internal_id);
+    if (iter == mHostedObjectsByID.end()) return HostedObjectPtr();
+    HostedObjectPtr ho = iter->second.lock();
+    return ho;
+}
+
 
 ObjectHost::SSTStreamPtr ObjectHost::getSpaceStream(const SpaceID& space, const ObjectReference& oref)
 {
@@ -364,18 +408,9 @@ void ObjectHost::stop() {
         sm->stop();
     }
 
-    // HostedObjects may appear multiple times because they may have
-    // multiple presences. Track which we've called stop on so we
-    // don't double-stop any of them.
-    std::tr1::unordered_set<UUID, UUID::Hasher> seen_hosted_objects;
-    for (HostedObjectMap::iterator iter = mHostedObjects.begin();
-         iter != mHostedObjects.end();
-         ++iter) {
-        HostedObjectPtr ho = iter->second;
-        if (seen_hosted_objects.find(ho->id()) == seen_hosted_objects.end()) {
-            seen_hosted_objects.insert(ho->id());
-            ho->stop();
-        }
+    for(InternalIDHostedObjectMap::const_iterator it = mHostedObjectsByID.begin(); it != mHostedObjectsByID.end(); it++) {
+        HostedObjectPtr ho = it->second.lock();
+        if (ho) ho->stop();
     }
 }
 
@@ -423,4 +458,82 @@ String ObjectHost::getSimOptions(const String&simName){
     std::string retval=where->second;
     return String(retval);
 }
+
+
+
+void ObjectHost::commandListObjects(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+    // Make sure we return the objects key set even if there are none
+    result.put( String("objects"), Command::Array());
+    Command::Array& objects_ary = result.getArray("objects");
+
+    Sirikata::SerializationCheck::Scoped sc(&mSessionSerialization);
+
+    for(InternalIDHostedObjectMap::const_iterator it = mHostedObjectsByID.begin(); it != mHostedObjectsByID.end(); it++) {
+        HostedObjectPtr ho = it->second.lock();
+        if (ho) objects_ary.push_back( ho->id().toString() );
+    }
+    cmdr->result(cmdid, result);
+}
+
+void ObjectHost::commandCreateObject(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+
+    if (!cmd.contains("script.type"))
+    {
+        result.put("error", "Must specify at least script.type");
+        cmdr->result(cmdid, result);
+        return;
+    }
+
+    String scriptType = cmd.getString("script.type");
+    String scriptOpts = cmd.getString("script.opts", "");
+    String scriptContents = cmd.getString("script.contents", "");
+
+    HostedObjectPtr obj;
+    obj = createObject(scriptType, scriptOpts, scriptContents);
+
+    result.put("id", obj->id().toString());
+    cmdr->result(cmdid, result);
+}
+
+HostedObjectPtr ObjectHost::getCommandObject(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    String obj_string = cmd.getString("object", "");
+    UUID objid(obj_string, UUID::HumanReadable());
+    if (objid == UUID::null()) { // not specified, not parsed
+        Command::Result result = Command::EmptyResult();
+        result.put("error", "Ill-formatted request: no object specified for disconnect.");
+        cmdr->result(cmdid, result);
+        return HostedObjectPtr();
+    }
+
+    HostedObjectPtr ho = getHostedObject(objid);
+    if (!ho) {
+        Command::Result result = Command::EmptyResult();
+        result.put("error", "Object not found");
+        cmdr->result(cmdid, result);
+        return HostedObjectPtr();
+    }
+
+    return ho;
+}
+
+void ObjectHost::commandDestroyObject(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    HostedObjectPtr ho = getCommandObject(cmd, cmdr, cmdid);
+    if (!ho) return;
+
+    Command::Result result = Command::EmptyResult();
+    ho->stop();
+    ho->destroy();
+    result.put("success", true);
+    cmdr->result(cmdid, result);
+}
+
+void ObjectHost::commandObjectPresences(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    HostedObjectPtr ho = getCommandObject(cmd, cmdr, cmdid);
+    if (!ho) return;
+
+    ho->commandPresences(cmd, cmdr, cmdid);
+}
+
 } // namespace Sirikata

@@ -143,7 +143,13 @@ String JSAggregateVisibleData::physics() const{
     return getBestChild()->physics();
 }
 
+bool JSAggregateVisibleData::isAggregate() const{
+    return getBestChild()->isAggregate();
+}
 
+ObjectReference JSAggregateVisibleData::parent() const{
+    return getBestChild()->parent();
+}
 
 void JSAggregateVisibleData::removeVisibleData(JSVisibleData* data) {
     Mutex::scoped_lock locker (childMutex);

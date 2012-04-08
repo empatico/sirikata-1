@@ -42,17 +42,25 @@ using namespace Sirikata::Transfer;
 using namespace Sirikata::Mesh;
 
 namespace Sirikata {
-std::tr1::shared_ptr<AssetDownloadTask> AssetDownloadTask::construct(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, FinishedCallback cb){
-    std::tr1::shared_ptr<AssetDownloadTask> retval(SelfWeakPtr<AssetDownloadTask>::internalConstruct(new AssetDownloadTask(uri,scene,priority,cb)));
+  std::tr1::shared_ptr<AssetDownloadTask> AssetDownloadTask::construct(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, FinishedCallback cb){
+  std::tr1::shared_ptr<AssetDownloadTask> retval(SelfWeakPtr<AssetDownloadTask>::internalConstruct(new AssetDownloadTask(uri,scene,priority,false,cb)));
     retval->downloadAssetFile();
     return retval;
 }
-AssetDownloadTask::AssetDownloadTask(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, FinishedCallback cb)
+
+std::tr1::shared_ptr<AssetDownloadTask> AssetDownloadTask::construct(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, bool isAgg, FinishedCallback cb){
+  std::tr1::shared_ptr<AssetDownloadTask> retval(SelfWeakPtr<AssetDownloadTask>::internalConstruct(new AssetDownloadTask(uri,scene,priority,isAgg,cb)));
+    retval->downloadAssetFile();
+    return retval;
+}
+
+AssetDownloadTask::AssetDownloadTask(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, bool isAgg, FinishedCallback cb)
  : mScene(scene),
    mAssetURI(uri),
    mPriority(priority),
    mCB(cb),
-   mAsset()
+   mAsset(),
+   mIsAggregate(isAgg)
 {
 }
 
@@ -93,6 +101,10 @@ void AssetDownloadTask::cancelNoLock() {
     for(ActiveDownloadMap::iterator it = mActiveDownloads.begin(); it != mActiveDownloads.end(); it++)
         it->second->cancel();
     mActiveDownloads.clear();
+    if (mParseMeshHandle) {
+        mParseMeshHandle->cancel();
+        mParseMeshHandle.reset();
+    }
 }
 
 void AssetDownloadTask::downloadAssetFile() {
@@ -117,12 +129,44 @@ void AssetDownloadTask::weakAssetFileDownloaded(std::tr1::weak_ptr<AssetDownload
     }
 }
 
+void AssetDownloadTask::getDownloadTasks(
+    std::vector<String>& finishedDownloads, std::vector<String>& activeDownloads)
+{
+    for (ActiveDownloadMap::iterator activeIt= mActiveDownloads.begin();
+         activeIt != mActiveDownloads.end(); ++activeIt)
+    {
+        activeDownloads.push_back(activeIt->first);
+    }
+
+    for (std::vector<String>::iterator strIt = mFinishedDownloads.begin();
+         strIt != mFinishedDownloads.end(); ++strIt)
+    {
+        finishedDownloads.push_back(*strIt);
+    }
+
+    // for (Dependencies::iterator depIter = mDependencies.begin();
+    //      depIter != mDependencies.end(); ++depIter)
+    // {
+    //     if (mActiveDownloads.find(depIter->first.toString()) == mActiveDownloads.end())
+    //         finishedDownloads.push_back(depIter->first.toString());
+    //     else
+    //         activeDownloads.push_back(depIter->first.toString());
+    // }
+}
+
+AssetDownloadTask::ActiveDownloadMap::size_type AssetDownloadTask::getOutstandingDependentDownloads()
+{
+    return mActiveDownloads.size();
+}
+
+
 void AssetDownloadTask::assetFileDownloaded(ResourceDownloadTaskPtr taskptr, Transfer::ChunkRequestPtr request, Transfer::DenseDataPtr response) {
     boost::mutex::scoped_lock lok(mDependentDownloadMutex);
 
     // Clear from the active download list
     assert(mActiveDownloads.size() == 1);
     mActiveDownloads.erase(taskptr->getIdentifier());
+    mFinishedDownloads.push_back(taskptr->getIdentifier());
 
     // Lack of response data means failure of some sort
     if (!response) {
@@ -137,8 +181,9 @@ void AssetDownloadTask::assetFileDownloaded(ResourceDownloadTaskPtr taskptr, Tra
     // beneficial since Ogre may have a copy even if we don't have a
     // copy of the raw data any more.
 
-    mScene->parseMesh(
-        request->getMetadata(), request->getMetadata().getFingerprint(), response,
+    mParseMeshHandle = mScene->parseMesh(
+        request->getMetadata(), request->getMetadata().getFingerprint(),
+        response, mIsAggregate,
         std::tr1::bind(&AssetDownloadTask::weakHandleAssetParsed, getWeakPtr(), _1)
     );
 }
@@ -188,15 +233,13 @@ void AssetDownloadTask::handleAssetParsed(Mesh::VisualPtr vis) {
         // we're probably going to hit some memory constraints
         {
             // Complete arbitrary number
-            if (md->textures.size() > 50) {
+            if (md->textures.size() > 100) {
                 SILOG(ogre,error, "Mesh with excessive number of textures: " << mAssetURI.toString() << " has " << md->textures.size() << " textures. Ignoring this mesh.");
                 mAsset = Mesh::VisualPtr();
                 mCB();
                 return;
             }
         }
-
-
 
         // Special case for no dependent downloads
         if (md->textures.size() == 0) {
@@ -250,6 +293,7 @@ void AssetDownloadTask::handleAssetParsed(Mesh::VisualPtr vis) {
     SILOG(ogre, error, "Tried to use AssetDownloadTask for a visual type it doesn't handle (" << vis->type() << "). Not downloading dependent resources.");
     mCB();
 }
+
 
 void AssetDownloadTask::addDependentDownload(ResourceDownloadTaskPtr resPtr) {
     boost::mutex::scoped_lock lok(mDependentDownloadMutex);
@@ -317,6 +361,7 @@ void AssetDownloadTask::textureDownloaded(Transfer::URI uri, ResourceDownloadTas
 
     // Clear the download task
     mActiveDownloads.erase(taskptr->getIdentifier());
+    mFinishedDownloads.push_back(taskptr->getIdentifier());
 
     // Lack of response data means failure of some sort
     if (!response) {

@@ -136,7 +136,7 @@ class SIRIKATA_OH_EXPORT SessionManager
         const TimedMotionQuaternion& init_orient,
         const BoundingSphere3f& init_bounds,
         const String& init_mesh, const String& init_phy,
-        const String& init_query,
+        const String& init_query, const String& init_zernike,
         ConnectedCallback connect_cb, MigratedCallback migrate_cb,
         StreamCreatedCallback stream_cb, DisconnectedCallback disconnected_cb
     );
@@ -196,7 +196,7 @@ private:
 
     // Schedules received server messages for handling
     void scheduleHandleServerMessages(SpaceNodeConnection* conn);
-    void handleServerMessages(SpaceNodeConnection* conn);
+    void handleServerMessages(Liveness::Token alive, SpaceNodeConnection* conn);
     // Starting point for handling of all messages from the server -- either handled as a special case, such as
     // for session management, or dispatched to the object
     void handleServerMessage(ObjectMessage* msg, ServerID sid);
@@ -323,6 +323,7 @@ private:
         String mesh;
         String physics;
         String query;
+        String zernike;
     };
     typedef std::tr1::function<void(const SpaceID&, const ObjectReference&, ServerID, const ConnectingInfo& ci)> InternalConnectedCallback;
 

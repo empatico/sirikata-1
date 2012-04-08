@@ -420,7 +420,7 @@ void SessionManager::poll() {
 bool SessionManager::connect(
     const SpaceObjectReference& sporef_objid,
     const TimedMotionVector3f& init_loc, const TimedMotionQuaternion& init_orient, const BoundingSphere3f& init_bounds,
-    const String& init_mesh, const String& init_phy, const String& init_query,
+    const String& init_mesh, const String& init_phy, const String& init_query, const String& init_zernike,
     ConnectedCallback connect_cb, MigratedCallback migrate_cb,
     StreamCreatedCallback stream_created_cb, DisconnectedCallback disconn_cb
 )
@@ -447,6 +447,7 @@ bool SessionManager::connect(
     ci.query = init_query;
     ci.mesh = init_mesh;
     ci.physics = init_phy;
+    ci.zernike = init_zernike;
 
 
     // connect_cb gets wrapped so we can start some automatic steps (initial
@@ -476,7 +477,6 @@ void SessionManager::disconnect(const SpaceObjectReference& sporef_objid) {
     Sirikata::SerializationCheck::Scoped sc(&mSerialization);
 
     ServerID connected_to = mObjectConnections.getConnectedServer(sporef_objid);
-    uint64 session_seqno = mObjectConnections.getSeqno(sporef_objid);
     // The caller may be conservative in calling disconnect, especially to make
     // sure disconnections are actually forced (e.g. for safety in the case of a
     // half-complete connection where the initial success is reported but
@@ -484,6 +484,7 @@ void SessionManager::disconnect(const SpaceObjectReference& sporef_objid) {
     if (connected_to == NullServerID)
         return;
 
+    uint64 session_seqno = mObjectConnections.getSeqno(sporef_objid);
     sendDisconnectMessage(sporef_objid, connected_to, session_seqno);
 
     // TODO(ewencp) we should probably keep around a record of this
@@ -575,6 +576,9 @@ void SessionManager::openConnectionStartSession(const SpaceObjectReference& spor
 
     if (ci.query.size() > 0)
         connect_msg.set_query_parameters( ci.query );
+
+    if (ci.zernike.size() > 0)
+      connect_msg.set_zernike( ci.zernike );
 
     if (!send(sporef_uuid, OBJECT_PORT_SESSION,
               UUID::null(), OBJECT_PORT_SESSION,
@@ -931,7 +935,7 @@ void SessionManager::handleSpaceConnection(const Sirikata::Network::Stream::Conn
         mConnections.erase(sid);
         if (mTimeSyncClient != NULL)
             mTimeSyncClient->removeNode(OHDP::NodeID(sid));
-        
+
         // Notify connected objects
         mObjectConnections.handleUnderlyingDisconnect(sid, reason);
         // If we have no connections left, we have to give up on TimeSync
@@ -952,12 +956,16 @@ void SessionManager::handleSpaceSession(ServerID sid, SpaceNodeConnection* conn)
 
 void SessionManager::scheduleHandleServerMessages(SpaceNodeConnection* conn) {
     mContext->mainStrand->post(
-        std::tr1::bind(&SessionManager::handleServerMessages, this, conn),
+        std::tr1::bind(&SessionManager::handleServerMessages, this, conn->livenessToken(), conn),
         "SessionManager::handleServerMessages"
     );
 }
 
-void SessionManager::handleServerMessages(SpaceNodeConnection* conn) {
+void SessionManager::handleServerMessages(Liveness::Token alive, SpaceNodeConnection* conn) {
+    Liveness::Lock conn_lock(alive);
+    if (!conn_lock)
+        return;
+
 #define MAX_HANDLE_SERVER_MESSAGES 20
     mHandleMessageProfiler->started();
 

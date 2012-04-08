@@ -9,6 +9,7 @@
 #include <sirikata/core/util/MotionVector.hpp>
 #include <sirikata/core/util/MotionQuaternion.hpp>
 #include <sirikata/core/transfer/URI.hpp>
+#include <sirikata/core/util/ObjectReference.hpp>
 
 namespace Sirikata {
 
@@ -25,6 +26,8 @@ public:
     virtual BoundingSphere3f bounds() const = 0;
     virtual Transfer::URI mesh() const = 0;
     virtual String physics() const = 0;
+    virtual bool isAggregate() const = 0;
+    virtual ObjectReference parent() const = 0;
 };
 typedef std::tr1::shared_ptr<IPresencePropertiesRead> IPresencePropertiesReadPtr;
 
@@ -39,7 +42,9 @@ public:
        mOrientation(Time::null(), MotionQuaternion(Quaternion::identity(), Quaternion::identity())),
        mBounds(Vector3f::zero(), 0),
        mMesh(),
-       mPhysics()
+       mPhysics(),
+       mIsAggregate(false),
+       mParent(ObjectReference::null())
     {}
     PresenceProperties(
         const TimedMotionVector3f& loc, const TimedMotionQuaternion& orient,
@@ -68,12 +73,19 @@ public:
     virtual String physics() const { return mPhysics; }
     virtual bool setPhysics(const String& p) { mPhysics = p; return true; }
 
+    virtual bool setIsAggregate(bool isAgg) { mIsAggregate = isAgg; return true; }
+    virtual bool isAggregate() const { return mIsAggregate; }
+
+    virtual bool setParent(const ObjectReference& par) { mParent = par; return true; }
+    virtual ObjectReference parent() const { return mParent; }
 protected:
     TimedMotionVector3f mLoc;
     TimedMotionQuaternion mOrientation;
     BoundingSphere3f mBounds;
     Transfer::URI mMesh;
     String mPhysics;
+    bool mIsAggregate;
+    ObjectReference mParent;
 };
 typedef std::tr1::shared_ptr<PresenceProperties> PresencePropertiesPtr;
 
@@ -89,7 +101,9 @@ public:
         LOC_BOUNDS_PART = 2,
         LOC_MESH_PART = 3,
         LOC_PHYSICS_PART = 4,
-        LOC_NUM_PART = 5
+        LOC_IS_AGG_PART = 5,
+        LOC_PARENT_PART = 6,
+        LOC_NUM_PART = 7
     };
 
     SequencedPresenceProperties()
@@ -155,6 +169,28 @@ public:
         return true;
     }
     bool setPhysics(const String& p) { return PresenceProperties::setPhysics(p); }
+
+    bool setIsAggregate(bool isAgg, uint64 seqno) {
+        if (seqno < mUpdateSeqno[LOC_IS_AGG_PART])
+            return false;
+
+        mUpdateSeqno[LOC_IS_AGG_PART] = seqno;
+        mIsAggregate = isAgg;
+        return true;
+    }
+    bool setIsAggregate(bool isAgg) { return PresenceProperties::setIsAggregate(isAgg); }
+
+
+    bool setParent(const ObjectReference& parent, uint64 seqno) {
+        if (seqno < mUpdateSeqno[LOC_PARENT_PART])
+            return false;
+
+        mUpdateSeqno[LOC_PARENT_PART] = seqno;
+        mParent = parent;
+        return true;
+    }
+    bool setParent(const ObjectReference& parent) { return PresenceProperties::setParent(parent); }
+
 
     void reset() {
         memset(mUpdateSeqno, 0, LOC_NUM_PART * sizeof(uint64));

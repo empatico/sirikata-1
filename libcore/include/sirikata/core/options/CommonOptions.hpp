@@ -38,6 +38,7 @@
 #define OPT_CRASHREPORT_URL       "crashreport"
 
 #define OPT_PLUGINS               "plugins"
+#define OPT_EXTRA_PLUGINS         "extra-plugins"
 
 #define OPT_LOG_FILE                  "log-file"
 #define STATS_TRACE_FILE     "stats.trace-filename"
@@ -56,6 +57,8 @@
 #define OPT_TRACE_TIMESERIES           "trace.timeseries"
 #define OPT_TRACE_TIMESERIES_OPTIONS   "trace.timeseries-options"
 
+#define OPT_COMMAND_COMMANDER           "command.commander"
+#define OPT_COMMAND_COMMANDER_OPTIONS   "command.commander-options"
 
 namespace Sirikata {
 

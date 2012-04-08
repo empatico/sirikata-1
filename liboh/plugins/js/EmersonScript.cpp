@@ -169,7 +169,7 @@ void EmersonScript::resetScript()
             //issue user-callback that jsvisiblestruct contined in proxSetIter
             //is a member of the proximity result set for the presence that has
             //sporef presIter->first.
-            iNotifyProximateHelper(*proxSetIter, presIter->first);
+            iResetProximateHelper(*proxSetIter,presIter->first);
         }
     }
 
@@ -228,15 +228,16 @@ void EmersonScript::iNotifyProximateGone(
     v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(JSObjectScript::mCtx->mIsolate);
 
-    //FIXME: we aren't ever freeing this memory
-    //lkjs; what about freeing this memeory?;
-    JSVisibleStruct* jsvis =
-        jsVisMan.createVisStruct(this, proximateObject->getObjectReference());
 
     std::map<uint32, JSContextStruct*>::iterator contIter;
     for (contIter  =  mContStructMap.begin(); contIter != mContStructMap.end();
          ++contIter)
     {
+        //create a separate one for each sandbox.  That way, can garbage collect
+        //across different contexts/objects.
+        JSVisibleStruct* jsvis =
+            jsVisMan.createVisStruct(this, proximateObject->getObjectReference());
+
         contIter->second->proximateEvent(querier, jsvis,true);
     }
 }
@@ -246,10 +247,10 @@ void EmersonScript::fireProxEvent(const SpaceObjectReference& localPresSporef,
     JSVisibleStruct* jsvis, JSContextStruct* jscont, bool isGone)
 {
     EMERSCRIPT_SERIAL_CHECK();
-    
+
     if (mEvalContextStack.empty())
         assert(false);
-    
+
     //this entire pre-amble is gross.
     EvalContext& ctx = mEvalContextStack.top();
     EvalContext new_ctx(ctx,jscont);
@@ -433,14 +434,21 @@ void  EmersonScript::iNotifyProximate(
         return;
     }
 
-    JSVisibleStruct* jsvis =
-        jsVisMan.createVisStruct(this, proximateObject->getObjectReference());
-    iNotifyProximateHelper(jsvis,querier);
+    std::map<uint32, JSContextStruct*>::iterator contIter;
+    for (contIter  =  mContStructMap.begin(); contIter != mContStructMap.end();
+         ++contIter)
+    {
+        //must create a separate visible per sandbox so that garbage collection
+        //destruction in one sandbox does not interfere with another sandbox.
+        JSVisibleStruct* jsvis =
+            jsVisMan.createVisStruct(this, proximateObject->getObjectReference());
+        contIter->second->proximateEvent(querier, jsvis,false);
+    }
 }
 
 
-void EmersonScript::iNotifyProximateHelper(
-    JSVisibleStruct* proxVis, const SpaceObjectReference& proxTo)
+void EmersonScript::iResetProximateHelper(
+    JSVisibleStruct* proxVis,const SpaceObjectReference& proxTo)
 {
     std::map<uint32, JSContextStruct*>::iterator contIter;
     for (contIter  =  mContStructMap.begin(); contIter != mContStructMap.end();
@@ -455,7 +463,7 @@ JSInvokableObject::JSInvokableObjectInt* EmersonScript::runSimulation(
     const SpaceObjectReference& sporef, const String& simname)
 {
     EMERSCRIPT_SERIAL_CHECK();
-    
+
     Simulation* sim =
         mParent->runSimulation(sporef,simname,JSObjectScript::mCtx->objStrand);
 
@@ -464,7 +472,7 @@ JSInvokableObject::JSInvokableObjectInt* EmersonScript::runSimulation(
 
     mSimulations.push_back(
         std::pair<String,SpaceObjectReference>(simname,sporef));
-    
+
     return new JSInvokableObject::JSInvokableObjectInt(sim);
 }
 
@@ -494,7 +502,7 @@ void EmersonScript::killScript()
         //storage.
         setRestoreScript(mContext,"",emptyCB);
     }
-    iStop(false);
+    iStop(livenessToken(), false);
     JSObjectScript::mCtx->objStrand->post(
         std::tr1::bind(&EmersonScript::postDestroy,this,
             livenessToken()),
@@ -720,6 +728,13 @@ void EmersonScript::eCreateEntityFinish(ObjectHost* oh,EntityCreateInfo& eci)
 
 EmersonScript::~EmersonScript()
 {
+    // We need to make sure we cleaned up. It's possible we got here before the
+    // initial stop request made it through to processing, so this makes sure we
+    // clean up, one way or another. This *must* be before the
+    // letDie() call.
+    if (!isStopped())
+        iStop(livenessToken(), false);
+
     if (Liveness::livenessAlive())
         Liveness::letDie();
 }
@@ -734,19 +749,20 @@ void EmersonScript::stop()
 {
     JSObjectScript::mCtx->stop();
     JSObjectScript::mCtx->objStrand->post(
-        std::tr1::bind(&EmersonScript::iStop,this,true),
+        std::tr1::bind(&EmersonScript::iStop,this, livenessToken(), true),
         "EmersonScript::iStop"
     );
 }
 
 //called from mStrand
-void EmersonScript::iStop(bool letDie)
+void EmersonScript::iStop(Liveness::Token alive, bool letDie)
 {
+    if (!alive) return;
     EMERSCRIPT_SERIAL_CHECK();
     if (letDie)
         Liveness::letDie();
 
-    
+
     JSObjectScript::mCtx->stop();
     v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(JSObjectScript::mCtx->mIsolate);
@@ -757,8 +773,8 @@ void EmersonScript::iStop(bool letDie)
         mParent->killSimulation(svIt->second,svIt->first);
     }
     mSimulations.clear();
-    
-    
+
+
     // Clean up ProxyCreationListeners. We subscribe for each presence in
     // onConnected, so we need to run through all presences (stored in the
     // HostedObject) and clear out ourselfs as a listener. Note that we have to
@@ -772,7 +788,7 @@ void EmersonScript::iStop(bool letDie)
     for (PresenceMap::const_iterator it = mPresences.begin(); it != mPresences.end(); it++)
         unsubscribePresenceEvents(it->first);
 
-    JSObjectScript::iStop(letDie);
+    JSObjectScript::iStop(alive, letDie);
 
     mParent->removeListener((SessionEventListener*)this);
 
@@ -1008,10 +1024,6 @@ void EmersonScript::iHandleScriptCommRead(
         return;
 
 
-    /**
-       lkjs;
-       FIXME: May want to check liveness here as well.
-     */
     Sirikata::JS::Protocol::JSMessage jsMsg;
     Sirikata::JS::Protocol::JSFieldValue jsFieldVal;
     bool isJSMsg   = jsMsg.ParseFromString(payload);
@@ -1188,7 +1200,7 @@ v8::Handle<v8::Value> EmersonScript::sendSandbox(const String& msgToSend, uint32
 
 //called from within mStrand
 void EmersonScript::processSandboxMessage(
-    const String& msgToSend, uint32 senderID, uint32 receiverID,
+    String payload, uint32 senderID, uint32 receiverID,
     Liveness::Token alive)
 {
     if (!alive) return;
@@ -1204,6 +1216,7 @@ void EmersonScript::processSandboxMessage(
 
     while(!JSObjectScript::mCtx->initialized())
     {}
+
 
     v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(JSObjectScript::mCtx->mIsolate);
@@ -1232,23 +1245,63 @@ void EmersonScript::processSandboxMessage(
         return;
 
 
-    //deserialize the message to an object
-    Sirikata::JS::Protocol::JSMessage js_msg;
-    bool parsed = js_msg.ParseFromArray(msgToSend.data(), msgToSend.size());
-    if (!parsed)
+
+    ////Try to decode the message
+    Sirikata::JS::Protocol::JSMessage jsMsg;
+    Sirikata::JS::Protocol::JSFieldValue jsFieldVal;
+
+    bool isJSMsg   = jsMsg.ParseFromString(payload);
+    if (! isJSMsg)
+        isJSMsg = jsMsg.ParseFromArray(payload.data(),payload.size());
+
+    bool isJSField = false;
+    if (!isJSMsg)
+    {
+        isJSField = jsFieldVal.ParseFromString(payload);
+        if (!isJSField)
+            isJSField = jsFieldVal.ParseFromArray(payload.data(), payload.size());
+    }
+
+    //if can't decode the payload as a jsmessage or
+    //a jsfieldval, then return false;
+    if (!(isJSMsg || isJSField))
         return;
 
+
+
+    //Above: Message has decoded to be complete
+    //Below: Try to turn the message into an Emerson object
+    mEvalContextStack.push(EvalContext(receiver));
     v8::HandleScope handle_scope;
-    v8::Context::Scope context_scope(receiver->mContext);
+    v8::Context::Scope context_scope (receiver->mContext);
 
-    bool deserializeWorks;
-    v8::Handle<v8::Object> msgObj = JSSerializer::deserializeObject( this, js_msg,deserializeWorks);
+    bool deserializeWorks = false;
+    v8::Handle<v8::Value> msgVal;
+    if (isJSMsg)
+    {
+        //try to decode as object.
+        msgVal = JSSerializer::deserializeObject( this, jsMsg,
+            deserializeWorks);        
+    }
+    else
+    {
+        //try to decode as a value.
+        msgVal = JSSerializer::deserializeMessage(this,jsFieldVal,
+            deserializeWorks);
+    }
+
     if (! deserializeWorks)
+    {
+        mEvalContextStack.pop();
         return;
+    }
 
+    //Turned into an Emerson object, now try executing any handlers that
+    //match
+    mHandlingEvent = true;
 
     v8::Handle<v8::Value> argv[2];
-    argv[0] =msgObj;
+    argv[0] =msgVal;
 
     if (receiver->mParentContext == sender)
         argv[1] =  v8::Null();
@@ -1260,7 +1313,10 @@ void EmersonScript::processSandboxMessage(
         argv[1] = senderObj;
     }
 
+    
     invokeCallback(receiver,receiver->sandboxMessageCallback,2,argv);
+    mHandlingEvent = false;
+    mEvalContextStack.pop();
     postCallbackChecks();
 }
 

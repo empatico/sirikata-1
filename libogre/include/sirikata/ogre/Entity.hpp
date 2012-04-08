@@ -72,7 +72,7 @@ protected:
     Ogre::MovableObject* mOgreObject;
     Ogre::SceneNode *mSceneNode;
 
-    std::list<Entity*>::iterator mMovingIter;
+    std::list<Entity*>::iterator mMovingIter;    
 
     ReplacedMaterialMap mReplacedMaterials;
     TextureBindingsMap mTextureBindings;
@@ -84,11 +84,15 @@ protected:
     // thing if you toggle visibility with cascading, then later add
     // more nodes.
     bool mVisible;
+    bool mIsAggregate;
+    float mAggregateRadius;
+    Vector3d mAggregateOffset;
+
     // And we track this because it's more efficient than looping through all
     // available animations on the mesh.
     Ogre::AnimationState* mCurrentAnimation;
     String mInitialAnimationName;
-
+    String mMeshName;
 
     std::set<String> mAnimationList;
     bool mMeshLoaded;
@@ -110,6 +114,8 @@ protected:
 
     void updateScale(float scale);
     void updateVisibility();
+
+    void setIsAggregate(bool isAgg);
 
 public:
     Entity(OgreRenderer *scene, const String& name);
@@ -145,7 +151,7 @@ public:
         return mSceneNode;
     }
 
-    Ogre::Entity* getOgreEntity() const;
+    Ogre::Entity* getOgreEntity() ;
     Ogre::BillboardSet* getOgreBillboard() const;
 
     void setOgrePosition(const Vector3d &pos);
@@ -153,6 +159,7 @@ public:
 
     Vector3d getOgrePosition();
     Quaternion getOgreOrientation();
+    float getRadius();
 
     void setSelected(bool selected);
 

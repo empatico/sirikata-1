@@ -39,6 +39,9 @@
 namespace Sirikata {
 namespace Graphics {
 class OgreRenderer;
+
+class ParseMeshTaskInfo;
+typedef std::tr1::shared_ptr<ParseMeshTaskInfo> ParseMeshTaskHandle;
 }
 
 /** An AssetDownloadTask manages the full download of an asset, including
@@ -60,18 +63,28 @@ public:
     };
     typedef std::map<Transfer::URI, ResourceData> Dependencies;
 private:
-    AssetDownloadTask(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, FinishedCallback cb);
+    AssetDownloadTask(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, bool isAgg, FinishedCallback cb);
 public:
     static std::tr1::shared_ptr<AssetDownloadTask> construct(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, FinishedCallback cb);
+    static std::tr1::shared_ptr<AssetDownloadTask> construct(const Transfer::URI& uri, Graphics::OgreRenderer* const scene, double priority, bool isAgg, FinishedCallback cb);
+
     ~AssetDownloadTask();
 
     Mesh::VisualPtr asset() const { return mAsset; }
     const Dependencies& dependencies() const { return mDependencies; }
     float64 priority() const { return mPriority; }
 
+    void getDownloadTasks(
+        std::vector<String>& finishedDownloads, std::vector<String>& activeDownloads);
+
+
     void updatePriority(float64 priority);
     void cancel();
+
+    typedef std::map<const String, Transfer::ResourceDownloadTaskPtr> ActiveDownloadMap;
+
 private:
+
     void downloadAssetFile();
     static void weakAssetFileDownloaded(std::tr1::weak_ptr<AssetDownloadTask> thus, Transfer::ResourceDownloadTaskPtr taskptr,
             Transfer::TransferRequestPtr request, Transfer::DenseDataPtr response);
@@ -109,14 +122,22 @@ private:
     double mPriority;
     FinishedCallback mCB;
 
+    Graphics::ParseMeshTaskHandle mParseMeshHandle;
     Mesh::VisualPtr mAsset;
     Dependencies mDependencies;
+    bool mIsAggregate;
 
     // Active downloads, for making sure shared_ptrs stick around and for cancelling
-    typedef std::map<const String, Transfer::ResourceDownloadTaskPtr> ActiveDownloadMap;
     ActiveDownloadMap mActiveDownloads;
+    std::vector<String> mFinishedDownloads;
 
     boost::mutex mDependentDownloadMutex;
+
+public:
+
+    ActiveDownloadMap::size_type getOutstandingDependentDownloads();
+
+
 };
 typedef std::tr1::shared_ptr<AssetDownloadTask> AssetDownloadTaskPtr;
 

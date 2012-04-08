@@ -60,10 +60,10 @@ ProxyObject::ProxyObject(ProxyManagerPtr man, const SpaceObjectReference& id)
      mID(id),
      mParent(man),
      mValid(true)
-{  
+{
     assert(mParent);
 
-    reset();        
+    reset();
     // Validate is forced in ProxyObject::construct
 }
 
@@ -73,7 +73,7 @@ ProxyObject::~ProxyObject() {
 }
 
 void ProxyObject::reset() {
-    SequencedPresenceProperties::reset();    
+    SequencedPresenceProperties::reset();
 }
 
 void ProxyObject::validate() {
@@ -167,6 +167,21 @@ String ProxyObject::physics() const {
     return req->physics();
 }
 
+bool ProxyObject::isAggregate() const {
+    PROXY_SERIALIZED();
+    if (!isPresence())
+        return SequencedPresenceProperties::isAggregate();
+    SequencedPresencePropertiesPtr req = mParent->parent()->presenceRequestedLocation(getObjectReference());
+    uint64 latest_epoch = mParent->parent()->presenceLatestEpoch(getObjectReference());
+    if (!req || latest_epoch >= req->getUpdateSeqNo(LOC_IS_AGG_PART))
+        return SequencedPresenceProperties::isAggregate();
+    return req->isAggregate();
+}
+
+ObjectReference ProxyObject::parentAggregate() const {
+    PROXY_SERIALIZED();
+    return SequencedPresenceProperties::parent();
+}
 
 TimedMotionVector3f ProxyObject::verifiedLocation() const {
     PROXY_SERIALIZED();
@@ -239,6 +254,15 @@ void ProxyObject::setPhysics (const String& rhs, uint64 seqno) {
         ProxyObjectPtr ptr = getSharedPtr();
         assert(ptr);
         if (ptr) MeshProvider::notify ( &MeshListener::onSetPhysics, ptr, rhs, mID);
+    }
+}
+
+void ProxyObject::setIsAggregate(bool isAggregate, uint64 seqno) {
+    PROXY_SERIALIZED();
+    if (SequencedPresenceProperties::setIsAggregate(isAggregate, seqno)) {
+        ProxyObjectPtr ptr = getSharedPtr();
+        assert(ptr);
+        if (ptr) MeshProvider::notify ( &MeshListener::onSetIsAggregate, ptr, isAggregate, mID);
     }
 }
 

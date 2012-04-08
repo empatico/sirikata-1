@@ -86,7 +86,7 @@ public:
     virtual void removeQuery(UUID obj);
 
     // LocationServiceListener Interface
-    virtual void localObjectAdded(const UUID& uuid, bool agg, const TimedMotionVector3f& loc, const TimedMotionQuaternion& orient, const BoundingSphere3f& bounds, const String& mesh, const String& physics);
+  virtual void localObjectAdded(const UUID& uuid, bool agg, const TimedMotionVector3f& loc, const TimedMotionQuaternion& orient, const BoundingSphere3f& bounds, const String& mesh, const String& physics, const String& zernike);
     virtual void localObjectRemoved(const UUID& uuid, bool agg);
     virtual void localLocationUpdated(const UUID& uuid, bool agg, const TimedMotionVector3f& newval);
     virtual void localBoundsUpdated(const UUID& uuid, bool agg, const BoundingSphere3f& newval);
@@ -111,7 +111,6 @@ public:
     // SpaceNetworkConnectionListener Interface
     virtual void onSpaceNetworkConnected(ServerID sid);
     virtual void onSpaceNetworkDisconnected(ServerID sid);
-
 
 
     // PROX Thread:
@@ -175,7 +174,7 @@ private:
 
     // Generate query events based on results collected from query handlers
     void generateServerQueryEvents(Query* query);
-    void generateObjectQueryEvents(Query* query);
+    void generateObjectQueryEvents(Query* query, bool do_first=false);
 
     // Decides whether a query handler should handle a particular object.
     bool handlerShouldHandleObject(bool is_static_handler, bool is_global_handler, const UUID& obj_id, bool local, const TimedMotionVector3f& pos, const BoundingSphere3f& region, float maxSize);
@@ -201,6 +200,7 @@ private:
     typedef std::tr1::unordered_map<ServerID, Query*> ServerQueryMap;
     typedef std::tr1::unordered_map<Query*, ServerID> InvertedServerQueryMap;
     typedef std::tr1::unordered_map<UUID, Query*, UUID::Hasher> ObjectQueryMap;
+    typedef std::tr1::unordered_set<Query*> FirstIterationObjectSet;
     typedef std::tr1::unordered_map<Query*, UUID> InvertedObjectQueryMap;
 
     typedef std::tr1::shared_ptr<ObjectSet> ObjectSetPtr;
@@ -252,7 +252,15 @@ private:
     // PROX Thread - Should only be accessed in methods used by the prox thread
 
     void tickQueryHandler(ProxQueryHandlerData qh[NUM_OBJECT_CLASSES]);
+    void rebuildHandlerType(ProxQueryHandlerData* handler, ObjectClass objtype);
     void rebuildHandler(ObjectClass objtype);
+
+    // Command handlers
+    virtual void commandProperties(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid);
+    virtual void commandListHandlers(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid);
+    bool parseHandlerName(const String& name, ProxQueryHandlerData** handlers_out, ObjectClass* class_out);
+    virtual void commandForceRebuild(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid);
+    virtual void commandListNodes(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid);
 
     typedef std::tr1::unordered_set<UUID, UUID::Hasher> ObjectIDSet;
     struct ProxQueryHandlerData {
@@ -281,6 +289,7 @@ private:
     // answer queries for objects connected to this server.
     ObjectQueryMap mObjectQueries[NUM_OBJECT_CLASSES];
     InvertedObjectQueryMap mInvertedObjectQueries;
+    FirstIterationObjectSet mObjectQueriesFirstIteration;
     ProxQueryHandlerData mObjectQueryHandler[NUM_OBJECT_CLASSES];
     bool mObjectDistance; // Using distance queries
     PollerService mObjectHandlerPoller;

@@ -31,7 +31,7 @@ TransferMediator::TransferMediator() {
     mCleanup = false;
     mNumOutstanding = 0;
     mAggregationAlgorithm = new MaxPriorityAggregation();
-    mThread = new Thread(std::tr1::bind(&TransferMediator::mediatorThread, this));
+    mThread = new Thread("TransferMediator", std::tr1::bind(&TransferMediator::mediatorThread, this));
 }
 
 TransferMediator::~TransferMediator() {
@@ -120,19 +120,24 @@ void TransferMediator::checkQueue() {
 
     if(findTop != priorityIndex.end()) {
         std::string topId = (*findTop)->getIdentifier();
-
         SILOG(transfer, detailed, priorityIndex.size() << " length agg list, top priority "
                 << (*findTop)->getPriority() << " id " << topId);
+    }
 
-        std::tr1::shared_ptr<TransferRequest> req = (*findTop)->getSingleRequest();
-
-        if(mNumOutstanding == 0) {
+    // While we have free slots and there are items left, scan for items that
+    // haven't been started yet that we can process.
+    while(findTop != priorityIndex.end() && mNumOutstanding < 10) {
+        if (!(*findTop)->mExecuting) {
             mNumOutstanding++;
-            req->execute(req, std::tr1::bind(&TransferMediator::execute_finished, this, req, topId));
+            (*findTop)->mExecuting = true;
+            std::tr1::shared_ptr<TransferRequest> req = (*findTop)->getSingleRequest();
+            req->execute(
+                req,
+                std::tr1::bind(&TransferMediator::execute_finished, this,
+                    req, (*findTop)->getIdentifier())
+            );
         }
-
-    } else {
-        //SILOG(transfer, detailed, priorityIndex.size() << " length agg list");
+        findTop++;
     }
 
     lock.unlock();
@@ -187,7 +192,9 @@ Priority TransferMediator::AggregateRequest::getPriority() const {
 }
 
 TransferMediator::AggregateRequest::AggregateRequest(std::tr1::shared_ptr<TransferRequest> req)
-    : mIdentifier(req->getIdentifier()) {
+ : mIdentifier(req->getIdentifier()),
+   mExecuting(false)
+{
     setClientPriority(req);
 }
 
@@ -197,7 +204,7 @@ TransferMediator::AggregateRequest::AggregateRequest(std::tr1::shared_ptr<Transf
 
 TransferMediator::PoolWorker::PoolWorker(std::tr1::shared_ptr<TransferPool> transferPool)
     : mTransferPool(transferPool), mCleanup(false) {
-    mWorkerThread = new Thread(std::tr1::bind(&PoolWorker::run, this));
+    mWorkerThread = new Thread("TransferMediator Worker", std::tr1::bind(&PoolWorker::run, this));
 }
 
 std::tr1::shared_ptr<TransferPool> TransferMediator::PoolWorker::getTransferPool() const {
@@ -277,6 +284,31 @@ void TransferMediator::PoolWorker::run() {
         }
 
     }
+}
+
+void TransferMediator::registerContext(Context* ctx) {
+    if (ctx->commander()) {
+        ctx->commander()->registerCommand(
+            "transfer.mediator.requests.list",
+            std::tr1::bind(&TransferMediator::commandListRequests, this, _1, _2, _3)
+        );
+    }
+}
+
+void TransferMediator::commandListRequests(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+    result.put( String("requests"), Command::Array());
+    Command::Array& requests_ary = result.getArray("requests");
+
+    boost::unique_lock<boost::mutex> lock(mAggMutex);
+    AggregateListByPriority& priorityIndex = mAggregateList.get<tagPriority>();
+    for(AggregateListByPriority::iterator req_it = priorityIndex.begin(); req_it != priorityIndex.end(); req_it++) {
+        requests_ary.push_back(Command::Object());
+        requests_ary.back().put("id", (*req_it)->getIdentifier());
+        requests_ary.back().put("priority", (*req_it)->getPriority());
+    }
+
+    cmdr->result(cmdid, result);
 }
 
 }

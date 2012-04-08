@@ -43,6 +43,7 @@
 
 #include <sirikata/space/AggregateManager.hpp>
 
+#include <sirikata/core/command/Commander.hpp>
 #include <json_spirit/json_spirit.h>
 
 #define PROXLOG(level,msg) SILOG(prox,level,"[PROX] " << msg)
@@ -87,8 +88,8 @@ LibproxProximity::LibproxProximity(SpaceContext* ctx, LocationService* locservic
    mObjectQueries(),
    mObjectDistance(false),
    mObjectHandlerPoller(mProxStrand, std::tr1::bind(&LibproxProximity::tickQueryHandler, this, mObjectQueryHandler), "LibproxProximity ObjectHandler Poll", Duration::milliseconds((int64)100)),
-   mStaticRebuilderPoller(mProxStrand, std::tr1::bind(&LibproxProximity::rebuildHandler, this, OBJECT_CLASS_STATIC), "LibproxProximity Static Rebuilder Poll", Duration::seconds(3600.f)),
-   mDynamicRebuilderPoller(mProxStrand, std::tr1::bind(&LibproxProximity::rebuildHandler, this, OBJECT_CLASS_DYNAMIC), "LibproxProximity Dynamic Rebuilder Poll", Duration::seconds(3600.f))
+   mStaticRebuilderPoller(mProxStrand, std::tr1::bind(&LibproxProximity::rebuildHandler, this, OBJECT_CLASS_STATIC), "LibproxProximity Static Rebuilder Poll", Duration::seconds(172800.f)),
+   mDynamicRebuilderPoller(mProxStrand, std::tr1::bind(&LibproxProximity::rebuildHandler, this, OBJECT_CLASS_DYNAMIC), "LibproxProximity Dynamic Rebuilder Poll", Duration::seconds(172800.f))
 {
     using std::tr1::placeholders::_1;
     using std::tr1::placeholders::_2;
@@ -337,7 +338,8 @@ void LibproxProximity::receiveMessage(Message* msg) {
                     TimedMotionQuaternion( addition.orientation().t(), MotionQuaternion(addition.orientation().position(), addition.orientation().velocity()) ),
                     addition.bounds(),
                     (addition.has_mesh() ? addition.mesh() : ""),
-                    (addition.has_physics() ? addition.physics() : "")
+                    (addition.has_physics() ? addition.physics() : ""), 
+                     ""  //no Zernike descriptor in Proximity message. is this ok to do? TAHIR.
                 );
             }
 
@@ -407,26 +409,34 @@ void LibproxProximity::removeRelevantServer(ServerID sid) {
 }
 
 void LibproxProximity::aggregateCreated(ProxAggregator* handler, const UUID& objid) {
+    // We ignore aggregates built of dynamic objects, they aren't useful for
+    // creating aggregate meshes
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateCreated(objid);
 }
 
 void LibproxProximity::aggregateChildAdded(ProxAggregator* handler, const UUID& objid, const UUID& child, const BoundingSphere3f& bnds) {
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateChildAdded(objid, child, bnds);
 }
 
 void LibproxProximity::aggregateChildRemoved(ProxAggregator* handler, const UUID& objid, const UUID& child, const BoundingSphere3f& bnds) {
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateChildRemoved(objid, child, bnds);
 }
 
 void LibproxProximity::aggregateBoundsUpdated(ProxAggregator* handler, const UUID& objid, const BoundingSphere3f& bnds) {
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateBoundsUpdated(objid, bnds);
 }
 
 void LibproxProximity::aggregateDestroyed(ProxAggregator* handler, const UUID& objid) {
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateDestroyed(objid);
 }
 
 void LibproxProximity::aggregateObserved(ProxAggregator* handler, const UUID& objid, uint32 nobservers) {
+    if (!static_cast<ProxQueryHandler*>(handler)->staticOnly()) return;
     LibproxProximityBase::aggregateObserved(objid, nobservers);
 }
 
@@ -611,9 +621,7 @@ void LibproxProximity::poll() {
     mObjectResults.swap(object_results_copy);
     mObjectResultsToSend.insert(mObjectResultsToSend.end(), object_results_copy.begin(), object_results_copy.end());
 
-
-    bool object_sent = true;
-    while(object_sent && !mObjectResultsToSend.empty()) {
+    while(!mObjectResultsToSend.empty()) {
         Sirikata::Protocol::Object::ObjectMessage* msg_front = mObjectResultsToSend.front();
         sendObjectResult(msg_front);
         delete msg_front;
@@ -637,7 +645,7 @@ void LibproxProximity::queryHasEvents(Query* query) {
 // Note: LocationServiceListener interface is only used in order to get updates on objects which have
 // registered queries, allowing us to update those queries as appropriate.  All updating of objects
 // in the prox data structure happens via the LocationServiceCache
-void LibproxProximity::localObjectAdded(const UUID& uuid, bool agg, const TimedMotionVector3f& loc, const TimedMotionQuaternion& orient, const BoundingSphere3f& bounds, const String& mesh, const String& physics) {
+  void LibproxProximity::localObjectAdded(const UUID& uuid, bool agg, const TimedMotionVector3f& loc, const TimedMotionQuaternion& orient, const BoundingSphere3f& bounds, const String& mesh, const String& physics, const String& zernike) {
     updateObjectSize(uuid, bounds.radius());
 }
 void LibproxProximity::localObjectRemoved(const UUID& uuid, bool agg) {
@@ -711,18 +719,177 @@ void LibproxProximity::tickQueryHandler(ProxQueryHandlerData qh[NUM_OBJECT_CLASS
             qh[i].additions.clear();
         }
     }
+
+    // We wait until the first full iteration is done for queries so we can
+    // coalesce their initial results, skipping intermediate refinement. Now's
+    // the time to mark them as having completed their first iteration and
+    // performing the coalescing.
+
+    // copied for safe iteration
+    FirstIterationObjectSet copied_first_its = mObjectQueriesFirstIteration;
+    for(FirstIterationObjectSet::const_iterator it = copied_first_its.begin(); it != copied_first_its.end(); it++)
+        generateObjectQueryEvents(*it, true);
+    mObjectQueriesFirstIteration.clear();
+}
+
+void LibproxProximity::rebuildHandlerType(ProxQueryHandlerData* handler, ObjectClass objtype) {
+    if (handler[objtype].handler != NULL)
+        handler[objtype].handler->rebuild();
 }
 
 void LibproxProximity::rebuildHandler(ObjectClass objtype) {
-    if (mServerQueryHandler[objtype].handler != NULL)
-        mServerQueryHandler[objtype].handler->rebuild();
-    if (mObjectQueryHandler[objtype].handler != NULL)
-        mObjectQueryHandler[objtype].handler->rebuild();
+    rebuildHandlerType(mServerQueryHandler, objtype);
+    rebuildHandlerType(mObjectQueryHandler, objtype);
 }
 
-void LibproxProximity::generateServerQueryEvents(Query* query) {
-    typedef std::deque<QueryEvent> QueryEventList;
 
+// Command handlers
+void LibproxProximity::commandProperties(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+
+    // Properties/settings
+    result.put("name", "libprox");
+    result.put("settings.handlers", mNumQueryHandlers * 2);
+    result.put("settings.dynamic_separate", mSeparateDynamicObjects);
+    if (mSeparateDynamicObjects)
+        result.put("settings.static_heuristic", mMoveToStaticDelay.toString());
+
+    // Current state. Split into two high level parts, objects and servers, and
+    // further split by properties of connected objects/servers and queries
+    // by them.
+
+    // Properties of objects
+    // We don't get this info from loc, we just figure it out based on what the
+    // query processors report: server queries only have local objects, object
+    // queries have both
+    int32 server_query_objects = (mNumQueryHandlers == 2 ? (mServerQueryHandler[0].handler->numObjects() + mServerQueryHandler[1].handler->numObjects()) : mServerQueryHandler[0].handler->numObjects());
+    int32 object_query_objects = (mNumQueryHandlers == 2 ? (mObjectQueryHandler[0].handler->numObjects() + mObjectQueryHandler[1].handler->numObjects()) : mObjectQueryHandler[0].handler->numObjects());
+    result.put("objects.properties.local_count", server_query_objects);
+    result.put("objects.properties.remote_count", object_query_objects - server_query_objects);
+    result.put("objects.properties.count", object_query_objects);
+    result.put("objects.properties.max_size", mMaxObject);
+
+    // Properties of queries from objects
+    result.put("queries.objects.count", mObjectQueries[0].size());
+    result.put("queries.objects.min_solid_angle", mMinObjectQueryAngle.asFloat());
+    result.put("queries.objects.max_max_count", mMaxMaxCount);
+    if (mObjectDistance)
+        result.put("queries.objects.distance", mDistanceQueryDistance);
+    // Technically not thread safe, but these should be simple
+    // read-only accesses.
+    uint32 obj_messages = 0;
+    for(ObjectProxStreamMap::iterator prox_stream_it = mObjectProxStreams.begin(); prox_stream_it != mObjectProxStreams.end(); prox_stream_it++)
+        obj_messages += prox_stream_it->second->outstanding.size();
+    result.put("queries.objects.messages", mObjectResults.size() + mObjectResultsToSend.size() + obj_messages);
+
+
+    // Properties of servers
+    result.put("servers.num_queried", mServersQueried.size());
+
+    // Properties of queries from servers
+    result.put("queries.servers.count", mServerQueries[0].size());
+    if (mServerDistance)
+        result.put("queries.servers.distance", mDistanceQueryDistance);
+    result.put("queries.servers.messages", mServerResults.size() + mServerResultsToSend.size());
+
+    cmdr->result(cmdid, result);
+}
+
+void LibproxProximity::commandListHandlers(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+    for(int i = 0; i < NUM_OBJECT_CLASSES; i++) {
+        if (mObjectQueryHandler[i].handler != NULL) {
+            String key = String("handlers.object.") + ObjectClassToString((ObjectClass)i) + ".";
+            result.put(key + "name", String("object-queries.") + ObjectClassToString((ObjectClass)i) + "-objects");
+            result.put(key + "queries", mObjectQueryHandler[i].handler->numQueries());
+            result.put(key + "objects", mObjectQueryHandler[i].handler->numObjects());
+            result.put(key + "nodes", mObjectQueryHandler[i].handler->numNodes());
+        }
+        if (mServerQueryHandler[i].handler != NULL) {
+            String key = String("handlers.server.") + ObjectClassToString((ObjectClass)i) + ".";
+            result.put(key + "name", String("server-queries.") + ObjectClassToString((ObjectClass)i) + "-objects");
+            result.put(key + "queries", mServerQueryHandler[i].handler->numQueries());
+            result.put(key + "objects", mServerQueryHandler[i].handler->numObjects());
+            result.put(key + "nodes", mServerQueryHandler[i].handler->numNodes());
+        }
+    }
+    cmdr->result(cmdid, result);
+}
+
+bool LibproxProximity::parseHandlerName(const String& name, ProxQueryHandlerData** handlers_out, ObjectClass* class_out) {
+    // Should be of the form xxx-queries.yyy-objects, containing only 1 .
+    std::size_t dot_pos = name.find('.');
+    if (dot_pos == String::npos || name.rfind('.') != dot_pos)
+        return false;
+
+    String handler_part = name.substr(0, dot_pos);
+    if (handler_part == "server-queries")
+        *handlers_out = mServerQueryHandler;
+    else if (handler_part == "object-queries")
+        *handlers_out = mObjectQueryHandler;
+    else
+        return false;
+
+    String class_part = name.substr(dot_pos+1);
+    if (class_part == "dynamic-objects")
+        *class_out = OBJECT_CLASS_DYNAMIC;
+    else if (class_part == "static-objects")
+        *class_out = OBJECT_CLASS_STATIC;
+    else
+        return false;
+
+    return true;
+}
+
+void LibproxProximity::commandForceRebuild(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+
+    ProxQueryHandlerData* handlers = NULL;
+    ObjectClass klass;
+    if (!cmd.contains("handler") ||
+        !parseHandlerName(cmd.getString("handler"), &handlers, &klass))
+    {
+        result.put("error", "Ill-formatted request: handler not specified or invalid.");
+        cmdr->result(cmdid, result);
+        return;
+    }
+
+    rebuildHandlerType(handlers, klass);
+    result.put("success", true);
+    cmdr->result(cmdid, result);
+}
+
+void LibproxProximity::commandListNodes(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid) {
+    Command::Result result = Command::EmptyResult();
+
+    ProxQueryHandlerData* handlers = NULL;
+    ObjectClass klass;
+    if (!cmd.contains("handler") ||
+        !parseHandlerName(cmd.getString("handler"), &handlers, &klass))
+    {
+        result.put("error", "Ill-formatted request: handler not specified or invalid.");
+        cmdr->result(cmdid, result);
+        return;
+    }
+
+    result.put( String("nodes"), Command::Array());
+    Command::Array& nodes_ary = result.getArray("nodes");
+    for(ProxQueryHandler::NodeIterator nit = handlers[klass].handler->nodesBegin(); nit != handlers[klass].handler->nodesEnd(); nit++) {
+        nodes_ary.push_back( Command::Object() );
+        nodes_ary.back().put("id", nit.id().toString());
+        nodes_ary.back().put("parent", nit.parentId().toString());
+        BoundingSphere3f bounds = nit.bounds(mContext->simTime());
+        nodes_ary.back().put("bounds.center.x", bounds.center().x);
+        nodes_ary.back().put("bounds.center.y", bounds.center().y);
+        nodes_ary.back().put("bounds.center.z", bounds.center().z);
+        nodes_ary.back().put("bounds.radius", bounds.radius());
+    }
+
+    cmdr->result(cmdid, result);
+}
+
+
+void LibproxProximity::generateServerQueryEvents(Query* query) {
     Time t = mContext->simTime();
     uint32 max_count = GetOptionValue<uint32>(PROX_MAX_PER_RESULT);
 
@@ -816,8 +983,12 @@ void LibproxProximity::generateServerQueryEvents(Query* query) {
     }
 }
 
-void LibproxProximity::generateObjectQueryEvents(Query* query) {
-    typedef std::deque<QueryEvent> QueryEventList;
+void LibproxProximity::generateObjectQueryEvents(Query* query, bool do_first) {
+    // If we're waiting for the first iteration to finish, we ignore the
+    // notification, waiting until we get out of the first tick to manually
+    // trigger updates.
+    bool is_first = (mObjectQueriesFirstIteration.find(query) != mObjectQueriesFirstIteration.end());
+    if (!do_first && is_first) return;
 
     uint32 max_count = GetOptionValue<uint32>(PROX_MAX_PER_RESULT);
 
@@ -827,6 +998,11 @@ void LibproxProximity::generateObjectQueryEvents(Query* query) {
 
     QueryEventList evts;
     query->popEvents(evts);
+
+    if (is_first) {
+        coalesceEvents(evts, 10);
+        mObjectQueriesFirstIteration.erase(query);
+    }
 
     while(!evts.empty()) {
         Sirikata::Protocol::Prox::ProximityResults prox_results;
@@ -850,12 +1026,17 @@ void LibproxProximity::generateObjectQueryEvents(Query* query) {
                     Sirikata::Protocol::Prox::IObjectAddition addition = event_results.add_addition();
                     addition.set_object( objid );
 
-
                     //query_id contains the uuid of the object that is receiving
                     //the proximity message that obj_id has been added.
                     uint64 seqNo = (*seqNoPtr);
                     addition.set_seqno (seqNo);
 
+                    if (mLocCache->isAggregate(objid)) {
+                      addition.set_type(Sirikata::Protocol::Prox::ObjectAddition::Aggregate);
+                    }
+                    else {
+                      addition.set_type(Sirikata::Protocol::Prox::ObjectAddition::Object);
+                    }
 
                     Sirikata::Protocol::ITimedMotionVector motion = addition.mutable_location();
                     TimedMotionVector3f loc = mLocCache->location(objid);
@@ -1063,6 +1244,7 @@ void LibproxProximity::handleUpdateObjectQuery(const UUID& object, const TimedMo
                     q->maxResults(max_results);
                 mObjectQueries[i][object] = q;
                 mInvertedObjectQueries[q] = object;
+                mObjectQueriesFirstIteration.insert(q);
                 q->setEventListener(this);
             }
         }
@@ -1090,6 +1272,7 @@ void LibproxProximity::handleRemoveObjectQuery(const UUID& object, bool notify_m
         Query* q = it->second;
         mObjectQueries[i].erase(it);
         mInvertedObjectQueries.erase(q);
+        mObjectQueriesFirstIteration.erase(q);
         delete q; // Note: Deleting query notifies QueryHandler and unsubscribes.
     }
 

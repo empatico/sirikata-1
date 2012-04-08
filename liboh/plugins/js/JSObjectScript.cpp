@@ -319,13 +319,15 @@ void JSObjectScript::start() {
 void JSObjectScript::stop()
 {
     mCtx->objStrand->post(
-        std::tr1::bind(&JSObjectScript::iStop,this,true),
+        std::tr1::bind(&JSObjectScript::iStop,this,livenessToken(),true),
         "JSObjectScript::iStop"
     );
 }
 
-void JSObjectScript::iStop(bool letDie)
+void JSObjectScript::iStop(Liveness::Token alive, bool letDie)
 {
+    if (!alive) return;
+
     // If we're really a subclass, i.e. an EmersonScript, we'll have already
     // called letDie().
     if (letDie)
@@ -477,7 +479,7 @@ void JSObjectScript::eStorageCommit(
 
 void JSObjectScript::storageCommitCallback(
     JSContextStruct* jscont, v8::Persistent<v8::Function> cb,
-    bool success, OH::Storage::ReadSet* rs,Liveness::Token objAlive,
+    OH::Storage::Result result, OH::Storage::ReadSet* rs,Liveness::Token objAlive,
     Liveness::Token ctxAlive)
 {
     if (!objAlive) return;
@@ -496,14 +498,14 @@ void JSObjectScript::storageCommitCallback(
 
     mCtx->objStrand->post(
         std::tr1::bind(&JSObjectScript::iStorageCommitCallback,this,
-            jscont,cb,success,rs,Liveness::livenessToken(),jscont->livenessToken()),
+            jscont,cb,result,rs,Liveness::livenessToken(),jscont->livenessToken()),
         "JSObjectScript::iStorageCommitCallback"
     );
 }
 
 void JSObjectScript::iStorageCommitCallback(
     JSContextStruct* jscont, v8::Persistent<v8::Function> cb,
-    bool success, OH::Storage::ReadSet* rs,Liveness::Token objAlive,
+    OH::Storage::Result result, OH::Storage::ReadSet* rs,Liveness::Token objAlive,
     Liveness::Token ctxAlive)
 {
     if (!objAlive) return;
@@ -536,7 +538,7 @@ void JSObjectScript::iStorageCommitCallback(
 
     TryCatch try_catch;
 
-    v8::Handle<v8::Boolean> js_success = v8::Boolean::New(success);
+    v8::Handle<v8::Boolean> js_success = v8::Boolean::New((result == OH::Storage::SUCCESS));
     v8::Handle<v8::Value> js_rs = v8::Undefined();
     if (rs && rs->size() > 0) {
         v8::Handle<v8::Object> js_rs_obj = v8::Object::New();
@@ -556,7 +558,7 @@ void JSObjectScript::iStorageCommitCallback(
 
 void JSObjectScript::storageCountCallback(
     JSContextStruct* jscont, v8::Persistent<v8::Function> cb,
-    bool success, int32 count,Liveness::Token objAlive,
+    OH::Storage::Result result, int32 count,Liveness::Token objAlive,
     Liveness::Token ctxAlive)
 {
     if (!objAlive) return;
@@ -575,7 +577,7 @@ void JSObjectScript::storageCountCallback(
 
     mCtx->objStrand->post(
         std::tr1::bind(&JSObjectScript::iStorageCountCallback,this,
-            jscont,cb,success,count,Liveness::livenessToken(),
+            jscont,cb,result,count,Liveness::livenessToken(),
             jscont->livenessToken()),
         "JSObjectScript::iStorageCountCallback"
     );
@@ -584,7 +586,7 @@ void JSObjectScript::storageCountCallback(
 
 void JSObjectScript::iStorageCountCallback(
     JSContextStruct* jscont, v8::Persistent<v8::Function> cb,
-    bool success, int32 count,Liveness::Token objAlive,
+    OH::Storage::Result result, int32 count,Liveness::Token objAlive,
     Liveness::Token ctxAlive)
 {
     if (!objAlive) return;
@@ -614,7 +616,7 @@ void JSObjectScript::iStorageCountCallback(
     v8::Context::Scope context_scope(mContext->mContext);
     TryCatch try_catch;
 
-    v8::Handle<v8::Boolean> js_success = v8::Boolean::New(success);
+    v8::Handle<v8::Boolean> js_success = v8::Boolean::New(result == OH::Storage::SUCCESS);
     v8::Handle<v8::Integer> js_count = v8::Integer::New(count);
 
     int argc = 2;
@@ -896,10 +898,10 @@ void JSObjectScript::iSetRestoreScriptCallback(
     if (!ctxAlive) return;
     Liveness::Lock lockedCtx(ctxAlive);
     if (!lockedCtx) return;
-    
+
     while (! mCtx->initialized())
     {}
-    
+
     JSSCRIPT_SERIAL_CHECK();
     if (isStopped()) {
         JSLOG(warn, "Ignoring restore script callback after shutdown request.");
@@ -907,7 +909,7 @@ void JSObjectScript::iSetRestoreScriptCallback(
     }
 
 
-    
+
     v8::Locker locker (mCtx->mIsolate);
     v8::Isolate::Scope iscope(mCtx->mIsolate);
 
@@ -1018,7 +1020,7 @@ void JSObjectScript::eSetRestoreScript(
                     jscont, cb, _1,Liveness::livenessToken(),jscont->livenessToken()));
     }
 
-    
+
     // FIXME we should really tack on any additional parameters we
     // received initially here
     String script_type = "";

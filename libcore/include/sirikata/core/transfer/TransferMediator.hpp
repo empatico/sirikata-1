@@ -47,6 +47,8 @@
 #include <sirikata/core/util/Thread.hpp>
 #include <sirikata/core/util/Singleton.hpp>
 
+#include <sirikata/core/command/Commander.hpp>
+
 namespace Sirikata {
 namespace Transfer {
 
@@ -69,7 +71,8 @@ class SIRIKATA_EXPORT TransferMediator
 	public:
 	    //Stores the aggregated priority
 		Priority mPriority;
-
+            // Whether we've started processing this request.
+            bool mExecuting;
 	private:
 		//Maps each client's string ID to the original TransferRequest object
 		std::map<std::string, std::tr1::shared_ptr<TransferRequest> > mTransferReqs;
@@ -198,12 +201,22 @@ class SIRIKATA_EXPORT TransferMediator
     void checkQueue();
 
     void registerPool(TransferPoolPtr pool);
+
+
+    void commandListRequests(const Command::Command& cmd, Command::Commander* cmdr, Command::CommandID cmdid);
 public:
     static TransferMediator& getSingleton();
     static void destroy();
 
     TransferMediator();
     ~TransferMediator();
+
+
+    /** Register this Context with the TransferMediator. This is a workaround to
+     *  the fact that TransferMediator is a Singleton. Currently this registers
+     *  a few commands through the Commander interface
+     */
+    void registerContext(Context* ctx);
 
     /** Used to register a client that has a pool of requests it needs
      *  serviced by the transfer mediator

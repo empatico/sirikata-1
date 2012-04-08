@@ -33,7 +33,7 @@
 #include <sirikata/core/util/Timer.hpp>
 #include <sirikata/core/network/NTPTimeSync.hpp>
 
-#include "ObjectHost.hpp"
+#include "SimObjectHost.hpp"
 #include "Object.hpp"
 #include "ObjectFactory.hpp"
 #include "ScenarioFactory.hpp"
@@ -58,7 +58,9 @@ int main(int argc, char** argv) {
 
     PluginManager plugins;
     plugins.loadList( GetOptionValue<String>(OPT_PLUGINS) );
+    plugins.loadList( GetOptionValue<String>(OPT_EXTRA_PLUGINS) );
     plugins.loadList( GetOptionValue<String>(OPT_OH_PLUGINS) );
+    plugins.loadList( GetOptionValue<String>(OPT_OH_EXTRA_PLUGINS) );
 
     // Fill defaults after plugin loading to ensure plugin-added
     // options get their defaults.
